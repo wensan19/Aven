@@ -1,0 +1,191 @@
+import { requireSupabase } from "./supabaseClient";
+import { monthKey, monthStart, nextMonthStart, normalizeFinanceType } from "../utils/format";
+
+export async function getMyProfile(userId) {
+  const { data, error } = await requireSupabase().from("profiles").select("*").eq("id", userId).single();
+  if (error) throw error;
+  return data;
+}
+
+export async function saveProfile(profile) {
+  const { data, error } = await requireSupabase().from("profiles").upsert(profile).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function uploadPublicFile(bucket, userId, file) {
+  if (!file) return "";
+  const ext = file.name.split(".").pop() || "png";
+  const path = `${userId}/${crypto.randomUUID()}.${ext}`;
+  const supabase = requireSupabase();
+  const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
+  if (error) throw error;
+  return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+}
+
+export async function listFinanceData(userId, month = monthStart()) {
+  const supabase = requireSupabase();
+  const monthEnd = nextMonthStart(monthKey(month));
+  const [categories, transactions, budgets, stocks] = await Promise.all([
+    supabase.from("categories").select("*").eq("user_id", userId).order("created_at"),
+    supabase.from("transactions").select("*, categories(name, icon_url)").eq("user_id", userId).gte("date", month).lt("date", monthEnd).order("date", { ascending: false }),
+    supabase.from("budgets").select("*, categories(name)").eq("user_id", userId).eq("month", month).order("created_at"),
+    supabase.from("stock_watchlists").select("*").eq("user_id", userId).order("symbol"),
+  ]);
+  for (const result of [categories, transactions, budgets, stocks]) if (result.error) throw result.error;
+  return {
+    categories: categories.data || [],
+    transactions: transactions.data || [],
+    budgets: budgets.data || [],
+    stocks: stocks.data || [],
+  };
+}
+
+export async function listSummaryData(userId) {
+  const supabase = requireSupabase();
+  const [transactions, budgets] = await Promise.all([
+    supabase.from("transactions").select("*, categories(name, icon_url)").eq("user_id", userId).order("date", { ascending: false }),
+    supabase.from("budgets").select("*, categories(name)").eq("user_id", userId).order("month", { ascending: false }),
+  ]);
+  for (const result of [transactions, budgets]) if (result.error) throw result.error;
+  return {
+    transactions: transactions.data || [],
+    budgets: budgets.data || [],
+  };
+}
+
+export async function createStarterCategories(userId) {
+  const starter = [
+    ["allowance", "Allowance"],
+    ["income", "Part-time Work"],
+    ["income", "Gifts"],
+    ["spending", "Food"],
+    ["spending", "Transport"],
+    ["spending", "Shopping"],
+    ["spending", "School"],
+    ["savings", "Travel Fund"],
+    ["savings", "Emergency Fund"],
+  ].map(([type, name]) => ({ user_id: userId, type, name }));
+  const { error } = await requireSupabase().from("categories").insert(starter);
+  if (error) throw error;
+}
+
+export async function saveCategory(category) {
+  const payload = {
+    id: category.id,
+    user_id: category.user_id,
+    type: normalizeFinanceType(category.type),
+    name: category.name,
+    icon_url: category.icon_url || null,
+  };
+  const { data, error } = await requireSupabase().from("categories").upsert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteCategory(id) {
+  const { error } = await requireSupabase().from("categories").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function saveTransaction(transaction) {
+  const payload = {
+    id: transaction.id,
+    user_id: transaction.user_id,
+    type: normalizeFinanceType(transaction.type),
+    category_id: transaction.category_id,
+    title: transaction.title || "",
+    image_url: transaction.image_url || null,
+    source_type: transaction.source_type || "allowance",
+    counts_as_allowance: Boolean(transaction.counts_as_allowance),
+    source_amount: transaction.source_amount === "" || transaction.source_amount === undefined ? null : transaction.source_amount,
+    allowance_amount: transaction.allowance_amount === "" || transaction.allowance_amount === undefined ? null : transaction.allowance_amount,
+    amount: transaction.amount,
+    note: transaction.note || "",
+    date: transaction.date,
+  };
+  const { data, error } = await requireSupabase().from("transactions").upsert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteTransaction(id) {
+  const { error } = await requireSupabase().from("transactions").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function saveBudget(budget) {
+  const payload = {
+    id: budget.id,
+    user_id: budget.user_id,
+    type: normalizeFinanceType(budget.type),
+    category_id: budget.category_id || null,
+    name: budget.name || "",
+    target_amount: budget.target_amount,
+    month: budget.month,
+    is_public_goal: Boolean(budget.is_public_goal),
+  };
+  const { data, error } = await requireSupabase().from("budgets").upsert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteBudget(id) {
+  const { error } = await requireSupabase().from("budgets").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function listUsers(search = "") {
+  const query = requireSupabase()
+    .from("profiles")
+    .select("id, username, display_name, bio, avatar_url, is_public")
+    .eq("is_public", true)
+    .limit(20);
+  if (search) query.or(`username.ilike.%${search}%,display_name.ilike.%${search}%`);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function followUser(followerId, followingId) {
+  const { error } = await requireSupabase().from("follows").insert({ follower_id: followerId, following_id: followingId });
+  if (error) throw error;
+}
+
+export async function unfollowUser(followerId, followingId) {
+  const { error } = await requireSupabase().from("follows").delete().eq("follower_id", followerId).eq("following_id", followingId);
+  if (error) throw error;
+}
+
+export async function getSocialCounts(userId) {
+  const supabase = requireSupabase();
+  const [followers, following] = await Promise.all([
+    supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", userId),
+    supabase.from("follows").select("*", { count: "exact", head: true }).eq("follower_id", userId),
+  ]);
+  if (followers.error) throw followers.error;
+  if (following.error) throw following.error;
+  return { followers: followers.count || 0, following: following.count || 0 };
+}
+
+export async function getFeed(userId) {
+  const supabase = requireSupabase();
+  const { data: follows, error: followsError } = await supabase.from("follows").select("following_id").eq("follower_id", userId);
+  if (followsError) throw followsError;
+  const ids = (follows || []).map((row) => row.following_id);
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from("activities")
+    .select("*, profiles(username, display_name, avatar_url)")
+    .in("user_id", ids)
+    .eq("is_public", true)
+    .order("created_at", { ascending: false })
+    .limit(30);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function addActivity(activity) {
+  const { error } = await requireSupabase().from("activities").insert(activity);
+  if (error) throw error;
+}
