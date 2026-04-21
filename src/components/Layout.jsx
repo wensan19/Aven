@@ -66,7 +66,7 @@ export function Layout({ active, setActive, children }) {
       <header className="topbar">
         <div>
           <p className="eyebrow">Aven Social Ledger</p>
-          <h1>Track your money, protect your privacy, share only the glow-up.</h1>
+          <h1>Track your money, protect your privacy, simply with Aven</h1>
         </div>
         <div className="top-profile">
           <div className="avatar">{profile?.avatar_url ? <img src={profile.avatar_url} alt="" /> : <PiggyBank size={24} />}</div>
