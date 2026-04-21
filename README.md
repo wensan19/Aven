@@ -68,7 +68,7 @@ Aven is configured for GitHub Pages at `/Aven/`.
 - the production build output lives in `dist/`
 - `.github/workflows/deploy-pages.yml` publishes `dist` to GitHub Pages
 
-If GitHub Pages is still showing a blank page, make sure the repository Pages source is set to **GitHub Actions**, not the repository root.
+If GitHub Pages is still showing a blank page or trying to load `/src/main.jsx`, make sure the repository Pages source is set to **GitHub Actions**, not the repository root. The root `index.html` is the Vite development entry and should not be served directly by Pages.
 
 ## Security Notes
 

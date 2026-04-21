@@ -31,6 +31,9 @@ const nav = [
   ["feed", "Feed", Users],
 ];
 
+const BUILD_VERSION = typeof __AVEN_BUILD_VERSION__ !== "undefined" ? __AVEN_BUILD_VERSION__ : "dev";
+const BUILD_STAMP = typeof __AVEN_BUILD_STAMP__ !== "undefined" ? __AVEN_BUILD_STAMP__ : "local";
+
 export function Layout({ active, setActive, children }) {
   const { profile } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -67,6 +70,7 @@ export function Layout({ active, setActive, children }) {
         <div>
           <p className="eyebrow">Aven Social Ledger</p>
           <h1>Track your money, protect your privacy, simply with Aven</h1>
+          <p className="build-marker">Build {BUILD_VERSION} • {BUILD_STAMP}</p>
         </div>
         <div className="top-profile">
           <div className="avatar">{profile?.avatar_url ? <img src={profile.avatar_url} alt="" /> : <PiggyBank size={24} />}</div>

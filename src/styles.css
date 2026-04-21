@@ -40,6 +40,7 @@ h2 { font-size: clamp(1.45rem, 4vw, 2.35rem); }
 .topbar { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: end; padding: 16px 0; }
 .top-profile { display: flex; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.68); box-shadow: var(--soft-shadow); }
 .top-profile span { display: block; color: var(--muted); font-size: .85rem; font-weight: 800; }
+.build-marker { margin: 10px 0 0; color: var(--muted); font-size: .78rem; font-weight: 800; }
 .eyebrow { margin: 0 0 7px; color: var(--blue-800); font-size: .74rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0; }
 .muted { color: var(--muted); line-height: 1.55; }
 .alert, .loading-strip, .success { margin: 12px 0; padding: 12px 14px; border-radius: var(--radius); background: var(--rose); color: #a85168; font-weight: 800; }
