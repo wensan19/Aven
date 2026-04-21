@@ -170,7 +170,6 @@ function Dashboard({ data, setModal, setImagePreview }) {
           <p className="eyebrow">Budget Pace</p>
           <h2>{targetPct >= 100 ? "Over target" : targetPct >= 80 ? "Close to limit" : "On track"}</h2>
           <p className="muted">{spendingTarget ? `${money(Math.max(spendingTarget.target_amount - totals.spending, 0))} left this month.` : "Add a monthly target to begin."}</p>
-          <Progress value={targetPct} />
           <button className="primary-action full" type="button" onClick={() => setModal("finance")}>
             <Plus size={16} /> Add Transaction
           </button>
