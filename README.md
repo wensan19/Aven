@@ -60,6 +60,16 @@ npm start
 
 The app will be available at `http://localhost:3000`.
 
+## GitHub Pages
+
+Aven is configured for GitHub Pages at `/Aven/`.
+
+- `vite.config.js` uses `base: "/Aven/"`
+- the production build output lives in `dist/`
+- `.github/workflows/deploy-pages.yml` publishes `dist` to GitHub Pages
+
+If GitHub Pages is still showing a blank page, make sure the repository Pages source is set to **GitHub Actions**, not the repository root.
+
 ## Security Notes
 
 - Supabase RLS keeps profiles, transactions, categories, budgets, and stock watchlists scoped to the authenticated owner.
