@@ -86,7 +86,7 @@ h2 { font-size: clamp(1.45rem, 4vw, 2.35rem); }
 .summary-mini-grid strong { color: var(--ink); font-size: .98rem; }
 .compact-select { min-width: 190px; display: grid; gap: 6px; color: var(--muted); font-size: .78rem; font-weight: 900; }
 .compact-select select { width: 100%; }
-.progress-ring { width: 150px; height: 150px; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--blue-600) 0 60%, #e3f1fb 60% 100%); box-shadow: inset 0 0 0 16px rgba(255,255,255,.78); }
+.progress-ring { width: 150px; height: 150px; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--blue-600) 0 var(--progress, 0%), #e3f1fb var(--progress, 0%) 100%); box-shadow: inset 0 0 0 16px rgba(255,255,255,.78); }
 .progress-ring span { font-size: 1.6rem; font-weight: 900; }
 .progress-ring small { color: var(--muted); font-weight: 900; }
 .soft-progress { width: 100%; height: 12px; overflow: hidden; border-radius: 999px; background: #e5f2fb; }

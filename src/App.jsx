@@ -139,8 +139,10 @@ function InnerApp() {
 function Dashboard({ data, setModal, setImagePreview }) {
   const totals = useTotals(data.transactions);
   const spendingTarget = data.budgets.find((budget) => budget.type === "spending" && !budget.category_id);
-  const targetPct = pct(totals.spending, spendingTarget?.target_amount);
   const balance = totals.allowance + totals.income - totals.spending - totals.savings;
+  const inflowTotal = totals.allowance + totals.income;
+  const spentChartBase = Number(spendingTarget?.target_amount || 0) > 0 ? Number(spendingTarget.target_amount) : inflowTotal;
+  const targetPct = spentChartBase > 0 ? pct(totals.spending, spentChartBase) : 0;
   const summaryCards = [
     dashboardSummaryItem("Allowance", "allowance", totals.allowance, data.budgets),
     dashboardSummaryItem("Earned", "income", totals.income, data.budgets),
@@ -159,7 +161,7 @@ function Dashboard({ data, setModal, setImagePreview }) {
             <h2>{money(balance)}</h2>
             <p className="muted">Allowance, earned money, spending, and savings stay private by default.</p>
           </div>
-          <div className="progress-ring">
+          <div className="progress-ring" style={{ "--progress": `${Math.min(Math.max(targetPct, 0), 100)}%` }}>
             <span>{targetPct}%</span>
             <small>spent</small>
           </div>
