@@ -33,7 +33,7 @@ PORT=3000
 -- paste supabase/schema.sql
 ```
 
-If you already created the database before richer transaction logs were added, run the latest `supabase/schema.sql` again. It includes safe `alter table ... add column if not exists` statements for `transactions.title`, `transactions.image_url`, `transactions.source_type`, `transactions.counts_as_allowance`, and `transactions.source_amount`, plus the `transaction-images` storage bucket policies.
+If you already created the database before richer transaction logs were added, run the latest `supabase/schema.sql` again. It includes safe `alter table ... add column if not exists` statements for `transactions.title`, `transactions.image_url`, `transactions.source_type`, `transactions.counts_as_allowance`, `transactions.source_amount`, and `transactions.allowance_amount`, plus the `transaction-images` storage bucket policies.
 
 4. Start the stock API backend.
 
@@ -47,7 +47,7 @@ npm run server
 npm run dev
 ```
 
-Open the Vite URL shown in the terminal. Stock requests from the frontend are proxied to the Node backend, so the stock API key is never exposed in browser code.
+Open the Vite URL shown in the terminal. Stock quote, search, and history requests from the frontend are proxied to the Node backend, so the Twelve Data API key is never exposed in browser code.
 
 ## Production
 

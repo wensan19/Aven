@@ -1,7 +1,8 @@
 const http = require("http");
 const fs = require("fs/promises");
 const path = require("path");
-const { getQuote, getHistory } = require("./services/twelveDataProvider");
+require("dotenv").config({ path: path.join(__dirname, ".env"), quiet: true });
+const { getQuote, getHistory, searchSymbols } = require("./services/twelveDataProvider");
 
 loadEnvFile();
 
@@ -32,14 +33,33 @@ function loadEnvFile() {
   file
     .split(/\r?\n/)
     .forEach((line) => {
-      const trimmed = line.trim();
+      const trimmed = line.replace(/^\uFEFF/, "").trim();
       if (!trimmed || trimmed.startsWith("#")) return;
       const equalsIndex = trimmed.indexOf("=");
       if (equalsIndex === -1) return;
       const key = trimmed.slice(0, equalsIndex).trim();
-      const value = trimmed.slice(equalsIndex + 1).trim();
+      const value = parseEnvValue(trimmed.slice(equalsIndex + 1));
       if (key && process.env[key] === undefined) process.env[key] = value;
     });
+}
+
+function parseEnvValue(rawValue) {
+  let value = String(rawValue || "").trim();
+  const quote = value[0];
+  if ((quote === "\"" || quote === "'") && value.endsWith(quote)) {
+    value = value.slice(1, -1);
+  } else {
+    value = value.replace(/\s+#.*$/, "").trim();
+  }
+  return value;
+}
+
+function assertStockApiKey() {
+  if (!process.env.STOCK_API_KEY) {
+    console.error("Missing STOCK_API_KEY. Add STOCK_API_KEY=your_twelve_data_api_key_here to .env and restart the backend server.");
+    return;
+  }
+  console.log("STOCK_API_KEY loaded: yes");
 }
 
 function isValidSymbol(symbol) {
@@ -50,6 +70,10 @@ function normalizeSymbol(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function isValidInterval(interval) {
+  return /^(1min|5min|15min|30min|45min|1h|2h|4h|1day|1week|1month)$/.test(interval);
+}
+
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -58,10 +82,25 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function logRequest(request, url) {
+  console.log("Request hit:", {
+    method: request.method,
+    path: url.pathname,
+    query: Object.fromEntries(url.searchParams.entries()),
+  });
+}
+
 function sendError(response, error) {
   const status = error.statusCode || 500;
+  console.error("Stock API backend error:", {
+    status,
+    message: error.message,
+    details: error.details || null,
+    stack: error.stack?.split("\n").slice(0, 3).join("\n"),
+  });
   sendJson(response, status, {
-    error: status === 500 ? "Something went wrong while fetching stock data." : error.message,
+    error: status === 500 ? "Stock search failed on the server." : error.message,
+    details: error.details || error.message,
   });
 }
 
@@ -98,9 +137,43 @@ async function handleApi(request, response, url) {
     if (request.method === "GET" && url.pathname === "/api/stocks/history") {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const range = url.searchParams.get("range") || "1m";
+      const interval = url.searchParams.get("interval");
+      const outputsize = url.searchParams.get("outputsize");
       if (!isValidSymbol(symbol)) return sendJson(response, 400, { error: "Enter a valid stock symbol." });
       if (!["1d", "1w", "1m", "6m", "1y"].includes(range)) return sendJson(response, 400, { error: "Unsupported chart range." });
-      return sendJson(response, 200, { history: await getHistory(symbol, range) });
+      if (interval && !isValidInterval(interval)) return sendJson(response, 400, { error: "Unsupported chart interval." });
+      const size = outputsize ? Number(outputsize) : null;
+      if (outputsize && (!Number.isInteger(size) || size < 1 || size > 5000)) return sendJson(response, 400, { error: "Output size must be between 1 and 5000." });
+      return sendJson(response, 200, { history: await getHistory(symbol, interval || outputsize ? { interval: interval || "1day", outputsize: size || 30 } : range) });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/stocks/search") {
+      const query = String(url.searchParams.get("query") || "").trim();
+      if (query.length < 2) return sendJson(response, 400, { error: "Enter at least 2 characters to search stocks." });
+      console.log(`Stock search route hit: "${query}"`);
+      try {
+        console.log("Stock search provider request sent");
+        const providerResults = await searchSymbols(query);
+        const results = Array.isArray(providerResults) ? providerResults : [];
+        console.log("Stock search route response shape:", {
+          isArray: Array.isArray(providerResults),
+          count: results.length,
+          sample: results[0] || null,
+        });
+        return sendJson(response, 200, { results });
+      } catch (error) {
+        console.error("Stock search route failed:", {
+          query,
+          message: error.message,
+          details: error.details || null,
+          stack: error.stack?.split("\n").slice(0, 4).join("\n"),
+        });
+        return sendJson(response, 200, {
+          results: [],
+          error: "Stock search failed",
+          details: error.message,
+        });
+      }
     }
 
     if (request.method === "GET" && url.pathname === "/api/stocks/watchlist") {
@@ -164,13 +237,76 @@ async function exists(targetPath) {
 
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
+  logRequest(request, url);
   if (url.pathname.startsWith("/api/")) {
-    handleApi(request, response, url);
+    handleApi(request, response, url).catch((error) => {
+      console.error("Unhandled API request failure:", {
+        message: error.message,
+        stack: error.stack?.split("\n").slice(0, 4).join("\n"),
+      });
+      if (!response.headersSent) sendError(response, error);
+      else response.end();
+    });
     return;
   }
-  serveStatic(request, response, url);
+  serveStatic(request, response, url).catch((error) => {
+    console.error("Unhandled static request failure:", {
+      message: error.message,
+      stack: error.stack?.split("\n").slice(0, 4).join("\n"),
+    });
+    if (!response.headersSent) {
+      response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Server error");
+      return;
+    }
+    response.end();
+  });
 });
 
-server.listen(PORT, () => {
-  console.log(`Aven is running at http://localhost:${PORT}`);
+server.on("listening", () => {
+  console.log("Server listening event fired");
+});
+
+server.on("close", () => {
+  console.log("Server close event fired");
+});
+
+server.on("error", (error) => {
+  console.error("Server error event:", {
+    message: error.message,
+    stack: error.stack?.split("\n").slice(0, 4).join("\n"),
+  });
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("uncaughtException:", {
+    message: error.message,
+    stack: error.stack?.split("\n").slice(0, 6).join("\n"),
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("unhandledRejection:", reason);
+});
+
+process.on("exit", (code) => {
+  console.log(`Process exiting with code ${code}`);
+});
+
+process.on("SIGINT", () => {
+  console.log("SIGINT received, shutting down server");
+  server.close(() => process.exit(0));
+});
+
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received, shutting down server");
+  server.close(() => process.exit(0));
+});
+
+console.log("Server startup beginning");
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log("Listen callback hit");
+  console.log(`Aven is running at http://127.0.0.1:${PORT}`);
+  assertStockApiKey();
 });

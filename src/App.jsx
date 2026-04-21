@@ -25,7 +25,7 @@ import {
   unfollowUser,
   uploadPublicFile,
 } from "./services/dataService";
-import { addStock, fetchStockHistory, fetchStockQuote, removeStock } from "./services/stockService";
+import { addStock, fetchStockHistory, fetchStockQuote, removeStock, searchStocks } from "./services/stockService";
 import { byType, FINANCE_TYPES, groupByCategory, money, monthKey, monthStart, normalizeFinanceType, pct } from "./utils/format";
 
 const MONEY_SOURCES = {
@@ -595,68 +595,136 @@ function SummaryCard({ summary }) {
 
 function Stocks({ data, user, refresh }) {
   const [symbol, setSymbol] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
   const [quotes, setQuotes] = useState({});
   const [selected, setSelected] = useState("");
   const [range, setRange] = useState("1m");
   const [history, setHistory] = useState([]);
   const [error, setError] = useState("");
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   async function loadQuotes() {
     setError("");
+    setQuoteLoading(true);
     const loaded = {};
-    for (const row of data.stocks) {
-      try {
-        loaded[row.symbol] = await fetchStockQuote(row.symbol);
-      } catch (err) {
-        setError(err.message);
-      }
-    }
+    const results = await Promise.allSettled(data.stocks.map((row) => fetchStockQuote(row.symbol)));
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") loaded[data.stocks[index].symbol] = result.value;
+    });
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) setError(failed.reason?.message || "Some stock quotes could not be loaded.");
     setQuotes(loaded);
-    if (!selected && data.stocks[0]) setSelected(data.stocks[0].symbol);
+    setQuoteLoading(false);
+  }
+
+  async function runSearch(event) {
+    event.preventDefault();
+    const query = symbol.trim();
+    if (!query) return;
+    setError("");
+    setSearchLoading(true);
+    try {
+      const results = await searchStocks(query);
+      setSearchResults(results);
+      if (!results.length) setError("No matching stocks found. Try a company name or ticker symbol.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSearchLoading(false);
+    }
   }
 
   useEffect(() => {
     loadQuotes();
-  }, [data.stocks.length]);
+    if (!selected && data.stocks[0]) setSelected(data.stocks[0].symbol);
+    if (selected && !data.stocks.some((row) => row.symbol === selected)) setSelected(data.stocks[0]?.symbol || "");
+  }, [data.stocks.map((row) => row.symbol).join(",")]);
 
   useEffect(() => {
-    if (!selected) return;
-    fetchStockHistory(selected, range).then((result) => setHistory(result.points || [])).catch((err) => setError(err.message));
+    if (!selected) {
+      setHistory([]);
+      return;
+    }
+    setChartLoading(true);
+    setError("");
+    fetchStockHistory(selected, range)
+      .then((result) => setHistory(result.points || []))
+      .catch((err) => {
+        setHistory([]);
+        setError(err.message);
+      })
+      .finally(() => setChartLoading(false));
   }, [selected, range]);
 
-  async function add(event) {
-    event.preventDefault();
-    await addStock(user.id, symbol);
-    setSymbol("");
-    await refresh();
+  async function add(symbolToAdd = symbol) {
+    const normalized = String(symbolToAdd || "").trim().toUpperCase();
+    if (!normalized) return;
+    setError("");
+    setSaving(true);
+    try {
+      await addStock(user.id, normalized);
+      setSymbol("");
+      setSearchResults([]);
+      setSelected(normalized);
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function remove(symbolToRemove) {
-    await removeStock(user.id, symbolToRemove);
-    if (selected === symbolToRemove) setSelected("");
-    await refresh();
+    setError("");
+    setSaving(true);
+    try {
+      await removeStock(user.id, symbolToRemove);
+      if (selected === symbolToRemove) setSelected("");
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <Page title="Your watchlist, softly organized" eyebrow="Stocks" action={<button className="ghost-button" onClick={loadQuotes}>Refresh</button>}>
-      <form className="stock-search-form" onSubmit={add}>
+      <form className="stock-search-form" onSubmit={runSearch}>
         <label>
-          Stock Symbol
-          <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} placeholder="AAPL, MSFT, TSLA" required />
+          Search Stock
+          <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Apple, AAPL, Microsoft..." required />
         </label>
-        <button className="primary-action">Add Stock</button>
+        <button className="primary-action" disabled={searchLoading || saving}>{searchLoading ? "Searching..." : "Search"}</button>
       </form>
+      {searchResults.length > 0 && (
+        <div className="stock-search-results">
+          {searchResults.map((result) => (
+            <article className="stock-result" key={`${result.symbol}-${result.exchange}`}>
+              <div>
+                <p className="item-title">{result.symbol}</p>
+                <p className="muted">{result.name || "Unknown company"}{result.exchange ? ` - ${result.exchange}` : ""}</p>
+              </div>
+              <button className="tiny-button" type="button" disabled={saving} onClick={() => add(result.symbol)}>Add to Watchlist</button>
+            </article>
+          ))}
+        </div>
+      )}
       {error && <div className="alert">{error}</div>}
+      {quoteLoading && <div className="loading-strip">Loading latest stock quotes...</div>}
       <section className="stock-layout">
         <div className="card-list">
-          {data.stocks.length ? data.stocks.map((row) => <StockCard key={row.id} quote={quotes[row.symbol]} symbol={row.symbol} active={selected === row.symbol} onSelect={setSelected} onRemove={remove} />) : <EmptyState title="No stocks saved">Add a symbol to start your watchlist.</EmptyState>}
+          {data.stocks.length ? data.stocks.map((row) => <StockCard key={row.id} quote={quotes[row.symbol]} symbol={row.symbol} active={selected === row.symbol} onSelect={setSelected} onRemove={remove} loading={quoteLoading && !quotes[row.symbol]} />) : <EmptyState title="No stocks saved">Search a company or ticker to start your watchlist.</EmptyState>}
         </div>
         <article className="panel">
           <div className="section-heading">
             <h2>{selected || "Select a stock"}</h2>
             <div className="range-pills">{["1d", "1w", "1m", "6m", "1y"].map((item) => <button key={item} className={`range-pill ${range === item ? "active" : ""}`} onClick={() => setRange(item)}>{item.toUpperCase()}</button>)}</div>
           </div>
-          <StockLineChart points={history} />
+          {chartLoading ? <div className="loading-strip">Loading chart...</div> : <StockLineChart points={history} />}
         </article>
       </section>
     </Page>
@@ -1818,9 +1886,41 @@ function InsightList({ data, totals }) {
   return <div className="card-list"><article className="soft-card"><p className="item-title">Biggest spending</p><p className="muted">{biggest ? `${biggest.name} at ${money(biggest.value)}` : "No spending yet."}</p></article><article className="soft-card"><p className="item-title">Savings progress</p><p className="muted">{money(totals.savings)} saved this month.</p></article></div>;
 }
 
-function StockCard({ symbol, quote, active, onSelect, onRemove }) {
+function StockCard({ symbol, quote, active, onSelect, onRemove, loading }) {
   const change = Number(quote?.percentChange || 0);
-  return <article className={`stock-card ${active ? "active" : ""}`} onClick={() => onSelect(symbol)}><div className="stock-card-top"><div><p className="stock-symbol">{symbol}</p><p className="stock-name">{quote?.name || "Loading quote..."}</p></div><span className={change < 0 ? "stock-change loss" : "stock-change"}>{quote ? `${change.toFixed(2)}%` : "--"}</span></div><strong>{quote ? money(quote.currentPrice, quote.currency) : "Loading"}</strong>{quote && <div className="stock-stat-grid"><StockStat label="Today High" value={money(quote.dailyHigh, quote.currency)} /><StockStat label="Today Low" value={money(quote.dailyLow, quote.currency)} /><StockStat label="52W High" value={money(quote.fiftyTwoWeekHigh, quote.currency)} /><StockStat label="52W Low" value={money(quote.fiftyTwoWeekLow, quote.currency)} /></div>}<button className="tiny-button" onClick={(e) => { e.stopPropagation(); onRemove(symbol); }}>Remove</button></article>;
+  return (
+    <article className={`stock-card ${active ? "active" : ""}`} onClick={() => onSelect(symbol)}>
+      <div className="stock-card-top">
+        <div>
+          <p className="stock-symbol">{symbol}</p>
+          <p className="stock-name">{quote?.name || (loading ? "Loading quote..." : "Quote unavailable")}</p>
+        </div>
+        <span className={change < 0 ? "stock-change loss" : "stock-change"}>{quote ? `${change.toFixed(2)}%` : "--"}</span>
+      </div>
+      <strong>{quote ? money(quote.currentPrice, quote.currency) : loading ? "Loading" : "No quote"}</strong>
+      {quote && (
+        <>
+          <div className="stock-stat-grid">
+            <StockStat label="Today High" value={money(quote.dailyHigh, quote.currency)} />
+            <StockStat label="Today Low" value={money(quote.dailyLow, quote.currency)} />
+            <StockStat label="52W High" value={money(quote.fiftyTwoWeekHigh, quote.currency)} />
+            <StockStat label="52W Low" value={money(quote.fiftyTwoWeekLow, quote.currency)} />
+          </div>
+          {quote.fiftyTwoWeekPosition !== null && quote.fiftyTwoWeekPosition !== undefined && (
+            <div className="stock-range">
+              <div className="section-heading">
+                <span className="muted">52-week position</span>
+                <span className="progress-pill">{quote.fiftyTwoWeekPosition}%</span>
+              </div>
+              <Progress value={quote.fiftyTwoWeekPosition} />
+            </div>
+          )}
+          <p className="muted">Updated {quote.lastUpdated || "recently"}</p>
+        </>
+      )}
+      <button className="tiny-button" onClick={(e) => { e.stopPropagation(); onRemove(symbol); }}>Remove</button>
+    </article>
+  );
 }
 
 function StockStat({ label, value }) {
