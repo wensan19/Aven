@@ -806,11 +806,11 @@ function Profile({ user, profile, setProfile, data, refresh, setFeedback, setErr
       await replaceSharePreferences(user.id, selectedSections);
       setProfile(saved);
       await refresh();
-      await addActivity({ user_id: user.id, type: "profile_updated", title: "Updated their profile", body: "Fresh profile details are live.", is_public: saved.is_public });
+      await addActivity({ user_id: user.id, activity_type: "profile_update", title: "Updated their profile", body: "Fresh profile details are live.", is_public: saved.is_public });
       setFeedback("Profile and sharing settings saved.");
     } catch (err) {
       console.error("Save profile failed:", err);
-      setError(err.message);
+      setError(readableSupabaseError(err, "Could not save your profile right now."));
     }
   }
 
@@ -2116,6 +2116,21 @@ function sourceDescription(entry) {
 
 function shareSectionLabel(sectionKey) {
   return SHAREABLE_SECTION_OPTIONS.find(([key]) => key === sectionKey)?.[1] || sectionKey;
+}
+
+function readableSupabaseError(error, fallback = "Something went wrong.") {
+  if (!error) return fallback;
+  if (typeof error === "string") return error;
+  const parts = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  if (parts.length) return parts.join(" ");
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return fallback;
+  }
 }
 
 function financeDisplayLabel(type) {

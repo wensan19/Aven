@@ -7,7 +7,7 @@ exception
 end $$;
 
 do $$ begin
-  create type public.activity_type as enum ('profile_updated', 'goal_added', 'goal_hit', 'budget_under');
+  create type public.activity_type as enum ('profile_update', 'profile_updated', 'goal_added', 'goal_hit', 'budget_under');
 exception
   when duplicate_object then null;
 end $$;
@@ -20,6 +20,7 @@ end $$;
 
 alter type public.finance_type add value if not exists 'stocks';
 alter type public.finance_type add value if not exists 'banking';
+alter type public.activity_type add value if not exists 'profile_update';
 alter type public.share_section add value if not exists 'allowance';
 alter type public.share_section add value if not exists 'income';
 alter type public.share_section add value if not exists 'spending';
@@ -126,12 +127,38 @@ create table if not exists public.user_share_preferences (
 create table public.activities (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
-  type activity_type not null,
+  activity_type activity_type not null,
   title text not null,
   body text not null default '',
   is_public boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+alter table public.activities add column if not exists activity_type public.activity_type;
+alter table public.activities add column if not exists title text not null default '';
+alter table public.activities add column if not exists body text not null default '';
+alter table public.activities add column if not exists is_public boolean not null default true;
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public' and table_name = 'activities' and column_name = 'type'
+  ) then
+    execute '
+      update public.activities
+      set activity_type = coalesce(activity_type, "type"::text::public.activity_type)
+      where activity_type is null and "type" is not null
+    ';
+  end if;
+end $$;
+
+update public.activities
+set activity_type = 'profile_update'
+where activity_type is null;
+
+alter table public.activities alter column activity_type set not null;
 
 create or replace view public.public_finance_summaries as
 select

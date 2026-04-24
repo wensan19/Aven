@@ -222,7 +222,16 @@ export async function getFeed(userId) {
 }
 
 export async function addActivity(activity) {
-  const { error } = await requireSupabase().from("activities").insert(activity);
+  const activityType = activity.activity_type || activity.type;
+  const payload = {
+    id: activity.id,
+    user_id: activity.user_id,
+    activity_type: activityType,
+    title: activity.title || "",
+    body: activity.body || "",
+    is_public: activity.is_public !== undefined ? Boolean(activity.is_public) : true,
+  };
+  const { error } = await requireSupabase().from("activities").insert(payload);
   if (error) throw error;
 }
 
