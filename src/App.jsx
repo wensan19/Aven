@@ -14,6 +14,7 @@ import {
   deleteTransaction,
   deleteWishlistItem,
   followUser,
+  buildSharedProfile,
   getFeed,
   getSocialCounts,
   listFinanceData,
@@ -907,16 +908,23 @@ function Profile({ user, profile, setProfile, data, refresh, setFeedback, setErr
 }
 
 function SharedProfilePreview({ user, form, data, selectedCategoryIds, wishlistShared }) {
-  const previewItem = buildPreviewSharedProfile({
-    user,
-    profile: form,
-    categories: data.categories,
-    transactions: data.transactions,
-    wishlistItems: data.wishlistItems,
-    selectedCategoryIds,
-    wishlistShared,
-    shareFinanceSummary: Boolean(form.share_finance_summary),
-  });
+  let previewItem = null;
+  let previewError = "";
+  try {
+    previewItem = buildPreviewSharedProfile({
+      user,
+      profile: form,
+      categories: data.categories,
+      transactions: data.transactions,
+      wishlistItems: data.wishlistItems,
+      selectedCategoryIds,
+      wishlistShared,
+      shareFinanceSummary: Boolean(form.share_finance_summary),
+    });
+  } catch (error) {
+    console.error("Shared profile preview failed:", error);
+    previewError = readableSupabaseError(error, "Could not build the shared profile preview.");
+  }
 
   return (
     <section className="panel shared-preview-panel">
@@ -926,7 +934,9 @@ function SharedProfilePreview({ user, form, data, selectedCategoryIds, wishlistS
           <h3>What others can see</h3>
         </div>
       </div>
-      {previewItem.shareNone ? (
+      {previewError ? (
+        <div className="alert">{previewError}</div>
+      ) : previewItem?.shareNone ? (
         <p className="muted">You are not sharing any categories, wishlist items, or summaries yet.</p>
       ) : (
         <SharedProfileCard item={previewItem} preview />

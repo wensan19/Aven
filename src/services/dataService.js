@@ -357,7 +357,7 @@ export async function replaceSharePreferences(userId, sectionKeys) {
   return data || [];
 }
 
-function buildSharedProfile({ currentUserId, profile, shareRows, categories, transactions, wishlistItems, summaries }) {
+export function buildSharedProfile({ currentUserId, profile, shareRows, categories, transactions, wishlistItems, summaries }) {
   const explicitShareNone = shareRows.some((row) => row.section_key === "share_none" && row.is_shared);
   const allowedCategoryIds = new Set(shareRows.filter((row) => row.category_id && row.is_shared).map((row) => row.category_id));
   const allowedSections = new Set(shareRows.filter((row) => !row.category_id && row.is_shared && row.section_key !== "share_none").map((row) => row.section_key));
