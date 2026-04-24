@@ -19,7 +19,12 @@ export async function uploadPublicFile(bucket, userId, file) {
   const path = `${userId}/${crypto.randomUUID()}.${ext}`;
   const supabase = requireSupabase();
   const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
-  if (error) throw error;
+  if (error) {
+    if (String(error.message || "").toLowerCase().includes("bucket not found")) {
+      throw new Error(`Supabase storage bucket "${bucket}" was not found. Run the latest supabase/schema.sql to create it.`);
+    }
+    throw new Error(readableDataError(error, `Could not upload file to "${bucket}".`));
+  }
   return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
 
@@ -149,6 +154,16 @@ export async function listUsers(search = "") {
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
+}
+
+function readableDataError(error, fallback = "Something went wrong.") {
+  if (!error) return fallback;
+  if (typeof error === "string") return error;
+  const parts = [error.message, error.details, error.hint]
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  return parts.length ? parts.join(" ") : fallback;
 }
 
 export async function followUser(followerId, followingId) {

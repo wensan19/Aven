@@ -29,7 +29,7 @@ import {
   unfollowUser,
   uploadPublicFile,
 } from "./services/dataService";
-import { addStock, fetchStockHistory, fetchStockQuote, removeStock, searchStocks } from "./services/stockService";
+import { addStock, fetchStockHistory, fetchStockQuote, isStaticStockDeployment, removeStock, searchStocks, stockAvailabilityMessage } from "./services/stockService";
 import { byType, FINANCE_TYPES, groupByCategory, money, monthKey, monthStart, normalizeFinanceType, pct } from "./utils/format";
 
 const MONEY_SOURCES = {
@@ -646,8 +646,14 @@ function Stocks({ data, user, refresh }) {
   const [chartLoading, setChartLoading] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const liveStocksDisabled = isStaticStockDeployment();
 
   async function loadQuotes() {
+    if (liveStocksDisabled) {
+      setError(stockAvailabilityMessage());
+      setQuotes({});
+      return;
+    }
     setError("");
     setQuoteLoading(true);
     const loaded = {};
@@ -663,6 +669,11 @@ function Stocks({ data, user, refresh }) {
 
   async function runSearch(event) {
     event.preventDefault();
+    if (liveStocksDisabled) {
+      setError(stockAvailabilityMessage());
+      setSearchResults([]);
+      return;
+    }
     const query = symbol.trim();
     if (!query) return;
     setError("");
@@ -679,14 +690,24 @@ function Stocks({ data, user, refresh }) {
   }
 
   useEffect(() => {
+    if (liveStocksDisabled) {
+      setQuotes({});
+      setHistory([]);
+      return;
+    }
     loadQuotes();
     if (!selected && data.stocks[0]) setSelected(data.stocks[0].symbol);
     if (selected && !data.stocks.some((row) => row.symbol === selected)) setSelected(data.stocks[0]?.symbol || "");
-  }, [data.stocks.map((row) => row.symbol).join(",")]);
+  }, [data.stocks.map((row) => row.symbol).join(","), liveStocksDisabled]);
 
   useEffect(() => {
     if (!selected) {
       setHistory([]);
+      return;
+    }
+    if (liveStocksDisabled) {
+      setHistory([]);
+      setError(stockAvailabilityMessage());
       return;
     }
     setChartLoading(true);
@@ -734,12 +755,13 @@ function Stocks({ data, user, refresh }) {
 
   return (
     <Page title="Your watchlist, softly organized" eyebrow="Stocks" action={<button className="ghost-button" onClick={loadQuotes}>Refresh</button>}>
+      {liveStocksDisabled && <div className="loading-strip">Live stock data is only available when the backend is running.</div>}
       <form className="stock-search-form" onSubmit={runSearch}>
         <label>
           Search Stock
           <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Apple, AAPL, Microsoft..." required />
         </label>
-        <button className="primary-action" disabled={searchLoading || saving}>{searchLoading ? "Searching..." : "Search"}</button>
+        <button className="primary-action" disabled={searchLoading || saving || liveStocksDisabled}>{searchLoading ? "Searching..." : "Search"}</button>
       </form>
       {searchResults.length > 0 && (
         <div className="stock-search-results">
@@ -749,7 +771,7 @@ function Stocks({ data, user, refresh }) {
                 <p className="item-title">{result.symbol}</p>
                 <p className="muted">{result.name || "Unknown company"}{result.exchange ? ` - ${result.exchange}` : ""}</p>
               </div>
-              <button className="tiny-button" type="button" disabled={saving} onClick={() => add(result.symbol)}>Add to Watchlist</button>
+              <button className="tiny-button" type="button" disabled={saving || liveStocksDisabled} onClick={() => add(result.symbol)}>Add to Watchlist</button>
             </article>
           ))}
         </div>
@@ -763,9 +785,9 @@ function Stocks({ data, user, refresh }) {
         <article className="panel">
           <div className="section-heading">
             <h2>{selected || "Select a stock"}</h2>
-            <div className="range-pills">{["1d", "1w", "1m", "6m", "1y"].map((item) => <button key={item} className={`range-pill ${range === item ? "active" : ""}`} onClick={() => setRange(item)}>{item.toUpperCase()}</button>)}</div>
+            <div className="range-pills">{["1d", "1w", "1m", "6m", "1y"].map((item) => <button key={item} className={`range-pill ${range === item ? "active" : ""}`} onClick={() => setRange(item)} disabled={liveStocksDisabled}>{item.toUpperCase()}</button>)}</div>
           </div>
-          {chartLoading ? <div className="loading-strip">Loading chart...</div> : <StockLineChart points={history} />}
+          {chartLoading ? <div className="loading-strip">Loading chart...</div> : liveStocksDisabled ? <p className="muted">Live stock history is only available when the backend is running.</p> : <StockLineChart points={history} />}
         </article>
       </section>
     </Page>
@@ -872,8 +894,44 @@ function Profile({ user, profile, setProfile, data, refresh, setFeedback, setErr
           </section>
           <button className="primary-action wide">Save Profile</button>
         </form>
+        <SharedProfilePreview
+          user={user}
+          form={form}
+          data={data}
+          selectedCategoryIds={selectedCategoryIds}
+          wishlistShared={wishlistShared}
+        />
       </section>
     </Page>
+  );
+}
+
+function SharedProfilePreview({ user, form, data, selectedCategoryIds, wishlistShared }) {
+  const previewItem = buildOwnerPreviewProfile({
+    user,
+    profile: form,
+    categories: data.categories,
+    transactions: data.transactions,
+    wishlistItems: data.wishlistItems,
+    selectedCategoryIds,
+    wishlistShared,
+    shareFinanceSummary: Boolean(form.share_finance_summary),
+  });
+
+  return (
+    <section className="panel shared-preview-panel">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Preview Shared Profile</p>
+          <h3>What others can see</h3>
+        </div>
+      </div>
+      {previewItem.shareNone ? (
+        <p className="muted">You are not sharing any categories, wishlist items, or summaries yet.</p>
+      ) : (
+        <SharedProfileCard item={previewItem} preview />
+      )}
+    </section>
   );
 }
 
@@ -932,7 +990,7 @@ function Feed({ user }) {
   );
 }
 
-function SharedProfileCard({ item }) {
+function SharedProfileCard({ item, preview = false }) {
   const sectionTotals = groupSharedTransactionsByType(item.transactions);
   const renderedCategoryCount = item.visibleCategories.length;
 
@@ -955,7 +1013,7 @@ function SharedProfileCard({ item }) {
             <p className="muted">@{item.profile?.username || "aven"}</p>
           </div>
         </div>
-        <span className="progress-pill">{item.shareNone ? "Share none" : `${item.visibleCategories.length} categories`}</span>
+        <span className="progress-pill">{preview ? "Preview" : item.shareNone ? "Share none" : `${item.visibleCategories.length} categories`}</span>
       </div>
 
       {!item.shareNone ? (
@@ -982,7 +1040,7 @@ function SharedProfileCard({ item }) {
                 ))}
               </div>
             ) : (
-              <p className="muted">This user is not sharing any categories yet.</p>
+              <p className="muted">{preview ? "You are not sharing any categories yet." : "This user is not sharing any categories yet."}</p>
             )}
           </div>
           {sectionTotals.length ? (
@@ -1022,7 +1080,7 @@ function SharedProfileCard({ item }) {
           )}
         </>
       ) : (
-        <p className="muted">This friend is sharing nothing private right now.</p>
+        <p className="muted">{preview ? "You are sharing nothing private right now." : "This friend is sharing nothing private right now."}</p>
       )}
     </article>
   );
@@ -2214,6 +2272,50 @@ function groupSharedTransactionsByType(transactions) {
     grouped.set(key, current);
   });
   return Array.from(grouped.values()).sort((a, b) => b.total - a.total);
+}
+
+function buildOwnerPreviewProfile({ user, profile, categories, transactions, wishlistItems, selectedCategoryIds, wishlistShared, shareFinanceSummary }) {
+  const visibleCategories = categories.filter((category) => selectedCategoryIds.includes(category.id));
+  const visibleCategoryIds = new Set(visibleCategories.map((category) => category.id));
+  const visibleTransactions = transactions.filter((entry) => visibleCategoryIds.has(entry.category_id));
+  const monthlyTransactions = transactions.filter((entry) => String(entry.date || "").slice(0, 7) === monthKey());
+  const summary = shareFinanceSummary
+    ? {
+        user_id: user.id,
+        month: monthStart(monthKey()),
+        monthly_income_total: monthlyTransactions
+          .filter((entry) => ["allowance", "income"].includes(normalizeFinanceType(entry.type)))
+          .reduce((sum, entry) => sum + Number(entry.amount || 0), 0),
+        monthly_spending_total: monthlyTransactions
+          .filter((entry) => normalizeFinanceType(entry.type) === "spending")
+          .reduce((sum, entry) => sum + Number(entry.amount || 0), 0),
+        monthly_savings_total: monthlyTransactions
+          .filter((entry) => normalizeFinanceType(entry.type) === "savings")
+          .reduce((sum, entry) => sum + Number(entry.amount || 0), 0),
+      }
+    : null;
+
+  return {
+    currentUserId: user.id,
+    profile: {
+      id: user.id,
+      username: profile.username,
+      display_name: profile.display_name,
+      avatar_url: profile.avatar_url,
+    },
+    shareRows: [
+      ...visibleCategories.map((category) => ({ user_id: user.id, section_key: normalizeFinanceType(category.type), category_id: category.id, is_shared: true })),
+      ...(wishlistShared ? [{ user_id: user.id, section_key: "wishlist", is_shared: true }] : []),
+    ],
+    fetchedCategoriesCount: categories.length,
+    visibleCategories,
+    transactions: visibleTransactions,
+    wishlistItems: wishlistShared ? wishlistItems : [],
+    wishlistVisible: wishlistShared,
+    shareNone: !visibleCategories.length && !wishlistShared && !shareFinanceSummary,
+    summaryVisible: shareFinanceSummary,
+    summary,
+  };
 }
 
 function readableSupabaseError(error, fallback = "Something went wrong.") {

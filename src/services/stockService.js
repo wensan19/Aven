@@ -1,5 +1,14 @@
 import { requireSupabase } from "./supabaseClient";
 
+export function isStaticStockDeployment() {
+  if (typeof window === "undefined") return false;
+  return import.meta.env.PROD && window.location.hostname.endsWith("github.io");
+}
+
+export function stockAvailabilityMessage() {
+  return "Live stock data is only available when the backend is running.";
+}
+
 function stockUrl(path, params) {
   const search = params ? `?${new URLSearchParams(params).toString()}` : "";
   const url = `/api${path}${search}`;
@@ -36,6 +45,7 @@ async function readJsonResponse(response) {
 }
 
 export async function fetchStockQuote(symbol) {
+  if (isStaticStockDeployment()) throw new Error(stockAvailabilityMessage());
   const response = await fetch(stockUrl("/stocks/quote", { symbol }));
   const body = await readJsonResponse(response);
   if (!response.ok) throw new Error(body.error || "Could not load stock quote.");
@@ -43,6 +53,7 @@ export async function fetchStockQuote(symbol) {
 }
 
 export async function fetchStockHistory(symbol, range = "1m") {
+  if (isStaticStockDeployment()) throw new Error(stockAvailabilityMessage());
   const params = { symbol };
   if (typeof range === "object") {
     if (range.interval) params.interval = range.interval;
@@ -57,6 +68,7 @@ export async function fetchStockHistory(symbol, range = "1m") {
 }
 
 export async function searchStocks(query) {
+  if (isStaticStockDeployment()) throw new Error(stockAvailabilityMessage());
   const url = stockUrl("/stocks/search", { query });
   const response = await fetch(url);
   const body = await readJsonResponse(response);

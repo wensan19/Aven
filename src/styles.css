@@ -175,6 +175,7 @@ input:focus, select:focus, textarea:focus { border-color: #78aee4; box-shadow: 0
 .avatar.large { width: 104px; height: 104px; font-size: 2.6rem; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .profile-card { display: grid; justify-items: start; gap: 10px; }
+.shared-preview-panel { display: grid; gap: 14px; }
 .shared-profile-card { display: grid; gap: 14px; }
 .shared-profile-header { display: flex; gap: 12px; align-items: center; }
 .share-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
