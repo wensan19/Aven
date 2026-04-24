@@ -46,12 +46,24 @@ jobs:
 
       - name: Verify production HTML entry
         run: |
+          if [ ! -f dist/index.html ]; then
+            echo "dist/index.html was not generated."
+            exit 1
+          fi
+          if [ ! -d dist/assets ]; then
+            echo "dist/assets was not generated."
+            exit 1
+          fi
           if grep -q "/src/main.jsx" dist/index.html; then
             echo "dist/index.html is still referencing raw JSX."
             exit 1
           fi
           if ! grep -q "/Aven/assets/" dist/index.html; then
             echo "dist/index.html is not referencing /Aven/assets/."
+            exit 1
+          fi
+          if ! find dist/assets -maxdepth 1 \( -name "*.js" -o -name "*.css" \) | grep -q .; then
+            echo "dist/assets does not contain built JS/CSS assets."
             exit 1
           fi
 

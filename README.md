@@ -69,6 +69,7 @@ Aven is configured for GitHub Pages at `/Aven/`.
 - `.github/workflows/deploy-pages.yml` publishes `dist` to GitHub Pages
 
 If GitHub Pages is still showing a blank page or trying to load `/src/main.jsx`, make sure the repository Pages source is set to **GitHub Actions**, not the repository root. The root `index.html` is the Vite development entry and should not be served directly by Pages.
+The deployed site must come from the workflow artifact built from `dist/`, where `dist/index.html` references `/Aven/assets/...` instead of `/src/main.jsx`.
 
 ## Security Notes
 
