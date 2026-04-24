@@ -12,16 +12,20 @@ import {
   deleteBudget,
   deleteCategory,
   deleteTransaction,
+  deleteWishlistItem,
   followUser,
   getFeed,
   getSocialCounts,
   listFinanceData,
+  listFollowingIds,
   listSummaryData,
   listUsers,
+  replaceSharePreferences,
   saveBudget,
   saveCategory,
   saveProfile,
   saveTransaction,
+  saveWishlistItem,
   unfollowUser,
   uploadPublicFile,
 } from "./services/dataService";
@@ -41,16 +45,26 @@ const SOURCE_CATEGORY_SLOTS = [
   { key: "stocks", categoryType: "stocks", title: "Stocks", description: "Track stock or investment money and decide whether it counts as allowance.", createName: "Stocks", createLabel: "Create Stocks category" },
   { key: "banking", categoryType: "banking", title: "Banking / Bank Account", description: "Track bank, checking, or debit account money separately or as allowance.", createName: "", createLabel: "Add Bank", sourceCreate: "banking" },
 ];
-const STANDARD_CATEGORY_TYPES = ["allowance", "income", "spending", "savings"];
+const STANDARD_CATEGORY_TYPES = ["allowance", "income", "spending"];
+const SHAREABLE_SECTION_OPTIONS = [
+  ["allowance", "Allowance"],
+  ["income", "Earned"],
+  ["spending", "Spent"],
+  ["savings", "Savings"],
+  ["stocks", "Stocks"],
+  ["banking", "Banking"],
+  ["wishlist", "Wishlist"],
+];
 
 const blankEntry = { type: "spending", title: "", amount: "", category_id: "", note: "", image_url: "", source_type: "allowance", counts_as_allowance: false, source_amount: "", allowance_amount: "", date: new Date().toISOString().slice(0, 10) };
 const blankCategory = { type: "spending", name: "", icon_url: "" };
 const blankFinanceUpdate = { type: "spending", title: "", amount: "", target_amount: "", category_id: "", note: "", image_url: "", source_type: "allowance", counts_as_allowance: false, source_amount: "", allowance_amount: "", date: new Date().toISOString().slice(0, 10) };
+const blankWishlistItem = { name: "", image_url: "", target_price: "", saved_amount: "", note: "" };
 
 function InnerApp() {
   const auth = useAuth();
   const [active, setActive] = useState("dashboard");
-  const [data, setData] = useState({ categories: [], transactions: [], budgets: [], stocks: [] });
+  const [data, setData] = useState({ categories: [], transactions: [], budgets: [], stocks: [], wishlistItems: [], sharePreferences: [] });
   const [month, setMonth] = useState(monthKey());
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -119,6 +133,7 @@ function InnerApp() {
       {active === "dashboard" && <Dashboard {...props} />}
       {active === "transactions" && <Transactions {...props} />}
       {active === "categories" && <Categories {...props} />}
+      {active === "wishlist" && <Wishlist {...props} />}
       {active === "targets" && <Targets {...props} />}
       {active === "analytics" && <Analytics {...props} />}
       {active === "summaries" && <Summaries {...props} />}
@@ -131,6 +146,7 @@ function InnerApp() {
       {modal?.type === "bankEntry" && <SourceEntryModal {...props} item={modal.item} kind="banking" onClose={closeModal} />}
       {modal?.type === "transaction" && <TransactionModal {...props} item={modal.item} onClose={closeModal} />}
       {modal?.type === "category" && <CategoryModal {...props} item={modal.item} onClose={closeModal} />}
+      {modal?.type === "wishlist" && <WishlistModal {...props} item={modal.item} onClose={closeModal} />}
       {imagePreview && <ImageLightbox image={imagePreview} onClose={() => setImagePreview(null)} />}
     </Layout>
   );
@@ -327,6 +343,38 @@ function Categories({ data, refresh, setModal, setError, setFeedback, setImagePr
           );
         })}
       </div>
+    </Page>
+  );
+}
+
+function Wishlist({ data, refresh, setModal, setError, setFeedback, setImagePreview }) {
+  async function remove(id) {
+    try {
+      await deleteWishlistItem(id);
+      await refresh();
+      setFeedback("Wishlist item deleted.");
+    } catch (err) {
+      console.error("Delete wishlist item failed:", err);
+      setError(err.message);
+    }
+  }
+
+  return (
+    <Page title="Save up for the things you want" eyebrow="Wishlist" action={<button className="primary-action" onClick={() => setModal("wishlist")}>Add Wishlist Item</button>}>
+      <p className="muted page-note">Track each item with an image, your target price, how much you have already saved, and an optional note.</p>
+      <section className="wishlist-grid">
+        {data.wishlistItems.length ? data.wishlistItems.map((item) => (
+          <WishlistCard
+            key={item.id}
+            item={item}
+            onEdit={() => setModal("wishlist", item)}
+            onDelete={() => remove(item.id)}
+            onImageOpen={setImagePreview}
+          />
+        )) : (
+          <EmptyState title="No wishlist items yet">Add your first wishlist item to track the price, saved amount, and remaining balance.</EmptyState>
+        )}
+      </section>
     </Page>
   );
 }
@@ -732,21 +780,38 @@ function Stocks({ data, user, refresh }) {
   );
 }
 
-function Profile({ user, profile, setProfile }) {
+function Profile({ user, profile, setProfile, data, refresh, setFeedback, setError }) {
   const [form, setForm] = useState(profile || {});
   const [file, setFile] = useState(null);
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
+  const [selectedSections, setSelectedSections] = useState([]);
   useEffect(() => {
     setForm(profile || {});
     if (user) getSocialCounts(user.id).then(setCounts).catch(() => {});
-  }, [profile?.id]);
+  }, [profile?.id, user]);
+
+  useEffect(() => {
+    setSelectedSections((data.sharePreferences || []).map((row) => row.section_key));
+  }, [data.sharePreferences]);
+
+  function toggleSection(sectionKey) {
+    setSelectedSections((current) => current.includes(sectionKey) ? current.filter((key) => key !== sectionKey) : [...current, sectionKey]);
+  }
 
   async function submit(event) {
     event.preventDefault();
-    const avatar_url = file ? await uploadPublicFile("avatars", user.id, file) : form.avatar_url;
-    const saved = await saveProfile({ ...form, id: user.id, email: user.email || "", avatar_url });
-    setProfile(saved);
-    await addActivity({ user_id: user.id, type: "profile_updated", title: "Updated their profile", body: "Fresh profile details are live.", is_public: saved.is_public });
+    try {
+      const avatar_url = file ? await uploadPublicFile("avatars", user.id, file) : form.avatar_url;
+      const saved = await saveProfile({ ...form, id: user.id, email: user.email || "", avatar_url });
+      await replaceSharePreferences(user.id, selectedSections);
+      setProfile(saved);
+      await refresh();
+      await addActivity({ user_id: user.id, type: "profile_updated", title: "Updated their profile", body: "Fresh profile details are live.", is_public: saved.is_public });
+      setFeedback("Profile and sharing settings saved.");
+    } catch (err) {
+      console.error("Save profile failed:", err);
+      setError(err.message);
+    }
   }
 
   return (
@@ -768,7 +833,25 @@ function Profile({ user, profile, setProfile }) {
           <label className="wide">Bio<textarea value={form.bio || ""} onChange={(e) => setForm({ ...form, bio: e.target.value })} /></label>
           <label>Profile photo<input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0])} /></label>
           <label className="check-row"><input type="checkbox" checked={Boolean(form.is_public)} onChange={(e) => setForm({ ...form, is_public: e.target.checked })} /> Public profile</label>
-          <label className="check-row"><input type="checkbox" checked={Boolean(form.share_finance_summary)} onChange={(e) => setForm({ ...form, share_finance_summary: e.target.checked })} /> Share monthly summaries</label>
+          <section className="panel share-settings wide">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Choose what to share</p>
+                <h3>Friend sharing controls</h3>
+              </div>
+              <button className="tiny-button" type="button" onClick={() => setSelectedSections([])}>Share None</button>
+            </div>
+            <p className="muted">Choose exactly which categories friends can see. Leave everything unchecked to share nothing private.</p>
+            <div className="share-option-list">
+              {SHAREABLE_SECTION_OPTIONS.map(([key, label]) => (
+                <label className="check-row share-option" key={key}>
+                  <input type="checkbox" checked={selectedSections.includes(key)} onChange={() => toggleSection(key)} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <p className="muted share-summary">{selectedSections.length ? `Sharing ${selectedSections.map((key) => SHAREABLE_SECTION_OPTIONS.find(([value]) => value === key)?.[1] || key).join(", ")}.` : "Share none is active. Followers will not see private categories or wishlist items."}</p>
+          </section>
           <button className="primary-action wide">Save Profile</button>
         </form>
       </section>
@@ -780,7 +863,12 @@ function Discover({ user }) {
   const [search, setSearch] = useState("");
   const [users, setUsers] = useState([]);
   const [following, setFollowing] = useState(new Set());
-  useEffect(() => { listUsers(search).then((rows) => setUsers(rows.filter((row) => row.id !== user.id))).catch(() => {}); }, [search]);
+  useEffect(() => {
+    listUsers(search).then((rows) => setUsers(rows.filter((row) => row.id !== user.id))).catch(() => {});
+  }, [search, user.id]);
+  useEffect(() => {
+    listFollowingIds(user.id).then((ids) => setFollowing(new Set(ids))).catch(() => {});
+  }, [user.id]);
   async function toggle(targetId) {
     if (following.has(targetId)) {
       await unfollowUser(user.id, targetId);
@@ -802,11 +890,73 @@ function Feed({ user }) {
   const [items, setItems] = useState([]);
   useEffect(() => { getFeed(user.id).then(setItems).catch(() => {}); }, [user.id]);
   return (
-    <Page title="Privacy-safe updates" eyebrow="Following Feed">
-      <div className="card-list">
-        {items.length ? items.map((item) => <article className="list-card" key={item.id}><Avatar url={item.profiles?.avatar_url} label={item.profiles?.display_name} /><div><p className="item-title">{item.profiles?.display_name || "Aven friend"} {item.title.toLowerCase()}</p><p className="muted">{item.body}</p></div></article>) : <EmptyState title="No feed yet">Follow public profiles to see summary-based activity.</EmptyState>}
-      </div>
+    <Page title="Privacy-safe shared content" eyebrow="Following Feed">
+      <section className="feed-grid">
+        {items.length ? items.map((item) => <SharedProfileCard key={item.profile.id} item={item} />) : <EmptyState title="No feed yet">Follow public profiles to see the categories and wishlist sections they choose to share.</EmptyState>}
+      </section>
     </Page>
+  );
+}
+
+function SharedProfileCard({ item }) {
+  const sectionTotals = SHAREABLE_SECTION_OPTIONS
+    .filter(([key]) => key !== "wishlist" && item.sharedSections.includes(key))
+    .map(([key, label]) => ({
+      key,
+      label,
+      total: item.transactions.filter((entry) => normalizeFinanceType(entry.type) === key).reduce((sum, entry) => sum + Number(entry.amount || 0), 0),
+      count: item.transactions.filter((entry) => normalizeFinanceType(entry.type) === key).length,
+    }))
+    .filter((section) => section.count > 0);
+  const wishlistVisible = item.sharedSections.includes("wishlist");
+
+  return (
+    <article className="panel shared-profile-card">
+      <div className="section-heading">
+        <div className="shared-profile-header">
+          <Avatar url={item.profile?.avatar_url} label={item.profile?.display_name} />
+          <div>
+            <p className="item-title">{item.profile?.display_name || "Aven friend"}</p>
+            <p className="muted">@{item.profile?.username || "aven"}</p>
+          </div>
+        </div>
+        <span className="progress-pill">{item.sharedSections.length ? `${item.sharedSections.length} shared` : "Share none"}</span>
+      </div>
+
+      {item.sharedSections.length ? (
+        <>
+          <div className="share-chip-row">
+            {item.sharedSections.map((sectionKey) => <span className="progress-pill" key={sectionKey}>{shareSectionLabel(sectionKey)}</span>)}
+          </div>
+          {sectionTotals.length ? (
+            <div className="shared-section-grid">
+              {sectionTotals.map((section) => (
+                <article className="soft-card shared-section-card" key={section.key}>
+                  <p className="item-title">{section.label}</p>
+                  <strong>{money(section.total)}</strong>
+                  <p className="muted">{section.count} shared {section.count === 1 ? "entry" : "entries"}</p>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No visible category activity yet for the sections this friend chose to share.</p>
+          )}
+          {wishlistVisible && (
+            <div className="shared-wishlist-stack">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Wishlist</p>
+                  <h3>Shared wishlist items</h3>
+                </div>
+              </div>
+              {item.wishlistItems.length ? item.wishlistItems.slice(0, 3).map((wishlistItem) => <WishlistCard key={wishlistItem.id} item={wishlistItem} compact />) : <p className="muted">Wishlist sharing is on, but there are no visible wishlist items yet.</p>}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="muted">This friend is sharing nothing private right now.</p>
+      )}
+    </article>
   );
 }
 
@@ -836,6 +986,18 @@ function categoryFormFromItem(item) {
     name: item.name || "",
     icon_url: item.icon_url || "",
     sourceCreate: item.sourceCreate || "",
+  };
+}
+
+function wishlistFormFromItem(item) {
+  if (!item) return blankWishlistItem;
+  return {
+    id: item.id,
+    name: item.name || "",
+    image_url: item.image_url || "",
+    target_price: item.target_price === null || item.target_price === undefined ? "" : String(item.target_price),
+    saved_amount: item.saved_amount === null || item.saved_amount === undefined ? "" : String(item.saved_amount),
+    note: item.note || "",
   };
 }
 
@@ -1487,6 +1649,93 @@ function CategoryModal({ user, refresh, onClose, item, setError, setFeedback }) 
   );
 }
 
+function WishlistModal({ user, refresh, onClose, item, setError, setFeedback }) {
+  const [form, setForm] = useState(() => wishlistFormFromItem(item));
+  const [file, setFile] = useState(null);
+  const [removeImage, setRemoveImage] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const isEditing = Boolean(item?.id);
+
+  async function submit(event) {
+    event.preventDefault();
+    setLocalError("");
+    try {
+      if (!form.name.trim()) throw new Error("Wishlist item name is required.");
+      const targetPrice = parseAmount(form.target_price, "Target price");
+      const savedAmount = parseAmount(form.saved_amount || 0, "Saved amount");
+      if (savedAmount > targetPrice) throw new Error("Saved amount cannot be more than the target price.");
+      const image_url = file ? await uploadPublicFile("wishlist-images", user.id, file) : removeImage ? "" : form.image_url || "";
+      await saveWishlistItem({
+        id: form.id,
+        user_id: user.id,
+        name: form.name.trim(),
+        image_url,
+        target_price: targetPrice,
+        saved_amount: savedAmount,
+        note: form.note || "",
+      });
+      await refresh();
+      setFeedback(isEditing ? "Wishlist item updated." : "Wishlist item added.");
+      onClose();
+    } catch (err) {
+      console.error("Save wishlist item failed:", err);
+      setLocalError(err.message);
+      setError(err.message);
+    }
+  }
+
+  const targetPrice = String(form.target_price).trim() === "" ? 0 : Number(form.target_price);
+  const savedAmount = String(form.saved_amount).trim() === "" ? 0 : Number(form.saved_amount);
+  const progress = pct(savedAmount, targetPrice);
+  const remaining = Math.max(targetPrice - savedAmount, 0);
+
+  return (
+    <Modal title={isEditing ? "Edit Wishlist Item" : "Add Wishlist Item"} eyebrow="Wishlist" onClose={onClose}>
+      <form className="form-grid" onSubmit={submit}>
+        {localError && <div className="alert wide">{localError}</div>}
+        <label>
+          Item Name
+          <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="AirPods, concert ticket, handbag..." required />
+        </label>
+        <label>
+          Target Price
+          <input type="number" min="0" step="0.01" inputMode="decimal" value={form.target_price} onChange={(event) => setForm({ ...form, target_price: event.target.value })} placeholder="250.00" required />
+        </label>
+        <label>
+          Amount Saved
+          <input type="number" min="0" step="0.01" inputMode="decimal" value={form.saved_amount} onChange={(event) => setForm({ ...form, saved_amount: event.target.value })} placeholder="120.00" />
+        </label>
+        <label className="wide">
+          Optional Note
+          <textarea value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="Birthday idea, sale watch, color preference, or gift note..." />
+        </label>
+        <label className="wide">
+          Item Image
+          <input type="file" accept="image/*" onChange={(event) => { setFile(event.target.files?.[0] || null); setRemoveImage(false); }} />
+        </label>
+        {(file || (form.image_url && !removeImage)) && (
+          <div className="image-preview wide">
+            <img src={file ? URL.createObjectURL(file) : form.image_url} alt="" />
+            <button className="tiny-button" type="button" onClick={() => { setFile(null); setRemoveImage(true); }}>Remove Image</button>
+          </div>
+        )}
+        <div className="progress-summary wide">
+          <div className="section-heading">
+            <div>
+              <p className="item-title">Wishlist progress</p>
+              <p className="muted">{targetPrice ? `${money(savedAmount)} / ${money(targetPrice)}` : "Add a target price to see progress."}</p>
+            </div>
+            <span className="progress-pill">{targetPrice ? `${progress}%` : "0%"}</span>
+          </div>
+          <Progress value={targetPrice ? progress : 0} />
+          <p className="muted">Remaining: {money(remaining)}</p>
+        </div>
+        <button className="primary-action wide">{isEditing ? "Update Wishlist Item" : "Save Wishlist Item"}</button>
+      </form>
+    </Modal>
+  );
+}
+
 function FinanceFields({ form, setForm, categories }) {
   return (
     <>
@@ -1865,6 +2114,10 @@ function sourceDescription(entry) {
   return `Source: ${source}`;
 }
 
+function shareSectionLabel(sectionKey) {
+  return SHAREABLE_SECTION_OPTIONS.find(([key]) => key === sectionKey)?.[1] || sectionKey;
+}
+
 function financeDisplayLabel(type) {
   const normalizedType = normalizeFinanceType(type);
   return {
@@ -1885,6 +2138,52 @@ function TransactionList({ entries, onEdit, onDelete, onImageOpen }) {
 function InsightList({ data, totals }) {
   const biggest = groupByCategory(data.transactions, data.categories, "spending").sort((a, b) => b.value - a.value)[0];
   return <div className="card-list"><article className="soft-card"><p className="item-title">Biggest spending</p><p className="muted">{biggest ? `${biggest.name} at ${money(biggest.value)}` : "No spending yet."}</p></article><article className="soft-card"><p className="item-title">Savings progress</p><p className="muted">{money(totals.savings)} saved this month.</p></article></div>;
+}
+
+function WishlistCard({ item, onEdit, onDelete, onImageOpen, compact = false }) {
+  const targetPrice = Number(item.target_price || 0);
+  const savedAmount = Number(item.saved_amount || 0);
+  const remaining = Math.max(targetPrice - savedAmount, 0);
+  const progress = pct(savedAmount, targetPrice);
+
+  return (
+    <article className={`panel wishlist-card ${compact ? "compact" : ""}`}>
+      <div className="wishlist-card-top">
+        <div className="wishlist-media">
+          {item.image_url ? (
+            <button className="wishlist-image-button" type="button" onClick={() => onImageOpen?.({ url: item.image_url, title: item.name })}>
+              <img className="wishlist-image" src={item.image_url} alt="" />
+            </button>
+          ) : (
+            <div className="wishlist-image placeholder">{(item.name || "W").slice(0, 1).toUpperCase()}</div>
+          )}
+          <div>
+            <p className="item-title">{item.name}</p>
+            <p className="muted">Target: {money(targetPrice)}</p>
+          </div>
+        </div>
+        {!compact && (
+          <div className="category-card-actions">
+            <button className="tiny-button" type="button" onClick={onEdit}>Edit</button>
+            <button className="tiny-button" type="button" onClick={onDelete}><Trash2 size={14} /> Delete</button>
+          </div>
+        )}
+      </div>
+      <div className="progress-summary">
+        <div className="section-heading">
+          <span className="muted">Saved {money(savedAmount)}</span>
+          <span className="progress-pill">{targetPrice ? `${progress}%` : "0%"}</span>
+        </div>
+        <Progress value={targetPrice ? progress : 0} />
+        <div className="wishlist-stats">
+          <span>Price <strong>{money(targetPrice)}</strong></span>
+          <span>Saved <strong>{money(savedAmount)}</strong></span>
+          <span>Remaining <strong>{money(remaining)}</strong></span>
+        </div>
+        {item.note ? <p className="muted">{item.note}</p> : null}
+      </div>
+    </article>
+  );
 }
 
 function StockCard({ symbol, quote, active, onSelect, onRemove, loading }) {

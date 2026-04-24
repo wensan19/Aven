@@ -26,18 +26,22 @@ export async function uploadPublicFile(bucket, userId, file) {
 export async function listFinanceData(userId, month = monthStart()) {
   const supabase = requireSupabase();
   const monthEnd = nextMonthStart(monthKey(month));
-  const [categories, transactions, budgets, stocks] = await Promise.all([
+  const [categories, transactions, budgets, stocks, wishlistItems, sharePreferences] = await Promise.all([
     supabase.from("categories").select("*").eq("user_id", userId).order("created_at"),
     supabase.from("transactions").select("*, categories(name, icon_url)").eq("user_id", userId).gte("date", month).lt("date", monthEnd).order("date", { ascending: false }),
     supabase.from("budgets").select("*, categories(name)").eq("user_id", userId).eq("month", month).order("created_at"),
     supabase.from("stock_watchlists").select("*").eq("user_id", userId).order("symbol"),
+    supabase.from("wishlist_items").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    supabase.from("user_share_preferences").select("*").eq("user_id", userId).order("section_key"),
   ]);
-  for (const result of [categories, transactions, budgets, stocks]) if (result.error) throw result.error;
+  for (const result of [categories, transactions, budgets, stocks, wishlistItems, sharePreferences]) if (result.error) throw result.error;
   return {
     categories: categories.data || [],
     transactions: transactions.data || [],
     budgets: budgets.data || [],
     stocks: stocks.data || [],
+    wishlistItems: wishlistItems.data || [],
+    sharePreferences: sharePreferences.data || [],
   };
 }
 
@@ -157,6 +161,12 @@ export async function unfollowUser(followerId, followingId) {
   if (error) throw error;
 }
 
+export async function listFollowingIds(userId) {
+  const { data, error } = await requireSupabase().from("follows").select("following_id").eq("follower_id", userId);
+  if (error) throw error;
+  return (data || []).map((row) => row.following_id);
+}
+
 export async function getSocialCounts(userId) {
   const supabase = requireSupabase();
   const [followers, following] = await Promise.all([
@@ -174,18 +184,75 @@ export async function getFeed(userId) {
   if (followsError) throw followsError;
   const ids = (follows || []).map((row) => row.following_id);
   if (!ids.length) return [];
-  const { data, error } = await supabase
-    .from("activities")
-    .select("*, profiles(username, display_name, avatar_url)")
-    .in("user_id", ids)
-    .eq("is_public", true)
-    .order("created_at", { ascending: false })
-    .limit(30);
-  if (error) throw error;
-  return data || [];
+  const [profiles, sharePreferences, transactions, wishlistItems] = await Promise.all([
+    supabase.from("profiles").select("id, username, display_name, avatar_url").in("id", ids).eq("is_public", true),
+    supabase.from("user_share_preferences").select("user_id, section_key").in("user_id", ids),
+    supabase.from("transactions").select("id, user_id, type, title, amount, note, date").in("user_id", ids).order("date", { ascending: false }).limit(200),
+    supabase.from("wishlist_items").select("id, user_id, name, image_url, target_price, saved_amount, note, created_at").in("user_id", ids).order("created_at", { ascending: false }).limit(100),
+  ]);
+  for (const result of [profiles, sharePreferences, transactions, wishlistItems]) if (result.error) throw result.error;
+
+  const preferencesByUser = new Map();
+  for (const row of sharePreferences.data || []) {
+    const current = preferencesByUser.get(row.user_id) || [];
+    current.push(row.section_key);
+    preferencesByUser.set(row.user_id, current);
+  }
+
+  const transactionsByUser = new Map();
+  for (const row of transactions.data || []) {
+    const current = transactionsByUser.get(row.user_id) || [];
+    current.push(row);
+    transactionsByUser.set(row.user_id, current);
+  }
+
+  const wishlistByUser = new Map();
+  for (const row of wishlistItems.data || []) {
+    const current = wishlistByUser.get(row.user_id) || [];
+    current.push(row);
+    wishlistByUser.set(row.user_id, current);
+  }
+
+  return (profiles.data || []).map((profile) => ({
+    profile,
+    sharedSections: preferencesByUser.get(profile.id) || [],
+    transactions: transactionsByUser.get(profile.id) || [],
+    wishlistItems: wishlistByUser.get(profile.id) || [],
+  }));
 }
 
 export async function addActivity(activity) {
   const { error } = await requireSupabase().from("activities").insert(activity);
   if (error) throw error;
+}
+
+export async function saveWishlistItem(item) {
+  const payload = {
+    id: item.id,
+    user_id: item.user_id,
+    name: item.name,
+    image_url: item.image_url || null,
+    target_price: item.target_price,
+    saved_amount: item.saved_amount,
+    note: item.note || "",
+  };
+  const { data, error } = await requireSupabase().from("wishlist_items").upsert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteWishlistItem(id) {
+  const { error } = await requireSupabase().from("wishlist_items").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function replaceSharePreferences(userId, sectionKeys) {
+  const supabase = requireSupabase();
+  const { error: deleteError } = await supabase.from("user_share_preferences").delete().eq("user_id", userId);
+  if (deleteError) throw deleteError;
+  if (!sectionKeys.length) return [];
+  const rows = sectionKeys.map((sectionKey) => ({ user_id: userId, section_key: sectionKey }));
+  const { data, error } = await supabase.from("user_share_preferences").insert(rows).select();
+  if (error) throw error;
+  return data || [];
 }
