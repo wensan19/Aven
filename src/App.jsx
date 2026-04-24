@@ -907,7 +907,7 @@ function Profile({ user, profile, setProfile, data, refresh, setFeedback, setErr
 }
 
 function SharedProfilePreview({ user, form, data, selectedCategoryIds, wishlistShared }) {
-  const previewItem = buildOwnerPreviewProfile({
+  const previewItem = buildPreviewSharedProfile({
     user,
     profile: form,
     categories: data.categories,
@@ -2298,12 +2298,9 @@ function groupSharedTransactionsByType(transactions) {
   return Array.from(grouped.values()).sort((a, b) => b.total - a.total);
 }
 
-function buildOwnerPreviewProfile({ user, profile, categories, transactions, wishlistItems, selectedCategoryIds, wishlistShared, shareFinanceSummary }) {
-  const visibleCategories = categories.filter((category) => selectedCategoryIds.includes(category.id));
-  const visibleCategoryIds = new Set(visibleCategories.map((category) => category.id));
-  const visibleTransactions = transactions.filter((entry) => visibleCategoryIds.has(entry.category_id));
+function buildPreviewSharedProfile({ user, profile, categories, transactions, wishlistItems, selectedCategoryIds, wishlistShared, shareFinanceSummary }) {
   const monthlyTransactions = transactions.filter((entry) => String(entry.date || "").slice(0, 7) === monthKey());
-  const summary = shareFinanceSummary
+  const summaries = shareFinanceSummary
     ? {
         user_id: user.id,
         month: monthStart(monthKey()),
@@ -2319,27 +2316,27 @@ function buildOwnerPreviewProfile({ user, profile, categories, transactions, wis
       }
     : null;
 
-  return {
+  return buildSharedProfile({
     currentUserId: user.id,
     profile: {
       id: user.id,
       username: profile.username,
       display_name: profile.display_name,
       avatar_url: profile.avatar_url,
+      share_finance_summary: shareFinanceSummary,
     },
     shareRows: [
-      ...visibleCategories.map((category) => ({ user_id: user.id, section_key: normalizeFinanceType(category.type), category_id: category.id, is_shared: true })),
+      ...categories
+        .filter((category) => selectedCategoryIds.includes(category.id))
+        .map((category) => ({ user_id: user.id, section_key: normalizeFinanceType(category.type), category_id: category.id, is_shared: true })),
       ...(wishlistShared ? [{ user_id: user.id, section_key: "wishlist", is_shared: true }] : []),
+      ...(!selectedCategoryIds.length && !wishlistShared && !shareFinanceSummary ? [{ user_id: user.id, section_key: "share_none", is_shared: true }] : []),
     ],
-    fetchedCategoriesCount: categories.length,
-    visibleCategories,
-    transactions: visibleTransactions,
+    categories,
+    transactions,
     wishlistItems: wishlistShared ? wishlistItems : [],
-    wishlistVisible: wishlistShared,
-    shareNone: !visibleCategories.length && !wishlistShared && !shareFinanceSummary,
-    summaryVisible: shareFinanceSummary,
-    summary,
-  };
+    summaries: summaries ? [summaries] : [],
+  });
 }
 
 function readableSupabaseError(error, fallback = "Something went wrong.") {

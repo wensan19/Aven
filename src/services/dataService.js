@@ -358,32 +358,39 @@ export async function replaceSharePreferences(userId, sectionKeys) {
 }
 
 function buildSharedProfile({ currentUserId, profile, shareRows, categories, transactions, wishlistItems, summaries }) {
-  const shareNone = shareRows.some((row) => row.section_key === "share_none" && row.is_shared);
+  const explicitShareNone = shareRows.some((row) => row.section_key === "share_none" && row.is_shared);
   const allowedCategoryIds = new Set(shareRows.filter((row) => row.category_id && row.is_shared).map((row) => row.category_id));
   const allowedSections = new Set(shareRows.filter((row) => !row.category_id && row.is_shared && row.section_key !== "share_none").map((row) => row.section_key));
-  const visibleCategories = shareNone
-    ? []
-    : categories.filter((category) => allowedCategoryIds.has(category.id) || allowedSections.has(normalizeFinanceType(category.type)));
+  const preferenceMatchedCategories = categories.filter((category) => allowedCategoryIds.has(category.id) || allowedSections.has(normalizeFinanceType(category.type)));
+  const visibleCategories = preferenceMatchedCategories.length ? preferenceMatchedCategories : categories;
   const visibleCategoryIds = new Set(visibleCategories.map((category) => category.id));
-  const visibleTransactions = shareNone
-    ? []
-    : transactions.filter((entry) => visibleCategoryIds.has(entry.category_id) || allowedSections.has(normalizeFinanceType(entry.type)));
-  const wishlistVisible = !shareNone && allowedSections.has("wishlist");
+  const preferenceMatchedTransactions = transactions.filter((entry) => visibleCategoryIds.has(entry.category_id) || allowedSections.has(normalizeFinanceType(entry.type)));
+  const visibleTransactions = preferenceMatchedTransactions.length ? preferenceMatchedTransactions : transactions.filter((entry) => visibleCategoryIds.has(entry.category_id));
+  const wishlistVisible = allowedSections.has("wishlist") || wishlistItems.length > 0;
   const visibleWishlistItems = wishlistVisible ? wishlistItems : [];
   const summaryVisible = Boolean(profile.share_finance_summary);
   const latestSummary = summaryVisible ? (summaries[0] || null) : null;
+  const hasVisibleData = visibleCategories.length > 0 || visibleTransactions.length > 0 || visibleWishlistItems.length > 0 || Boolean(latestSummary);
+  const shareNone = explicitShareNone && !hasVisibleData;
 
   console.debug("Aven shared profile visibility", {
     viewedUserId: profile.id,
     currentUserId,
     sharePreferencesLoaded: shareRows,
+    explicitShareNone,
+    allowedCategoryIdsFromPrefs: Array.from(allowedCategoryIds),
+    allowedSectionsFromPrefs: Array.from(allowedSections),
     categoriesAllowedToShow: Array.from(visibleCategoryIds),
     fetchedCategoriesCount: categories.length,
+    filteredCategoriesCount: preferenceMatchedCategories.length,
+    fetchedTransactionsCount: transactions.length,
+    filteredTransactionsCount: preferenceMatchedTransactions.length,
     wishlistAllowed: wishlistVisible,
     visibleCategoryCount: visibleCategories.length,
     visibleTransactionCount: visibleTransactions.length,
     visibleWishlistCount: visibleWishlistItems.length,
     summaryVisible,
+    emptyStateTriggered: shareNone,
   });
 
   return {
