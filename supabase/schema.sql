@@ -195,7 +195,9 @@ where activity_type is null;
 
 alter table public.activities alter column activity_type set not null;
 
-create or replace view public.public_finance_summaries as
+drop view if exists public.public_finance_summaries;
+
+create view public.public_finance_summaries as
 select
   p.id as user_id,
   p.username,
@@ -209,6 +211,9 @@ from public.profiles p
 left join public.transactions t on t.user_id = p.id
 where p.is_public = true and p.share_finance_summary = true
 group by p.id, p.username, p.display_name, p.avatar_url, date_trunc('month', t.date);
+
+grant select on public.public_finance_summaries to authenticated;
+grant select on public.public_finance_summaries to anon;
 
 alter table public.profiles enable row level security;
 alter table public.follows enable row level security;

@@ -182,6 +182,17 @@ export async function getFeed(userId) {
   return listSharedProfiles(userId, { onlyFollowing: true });
 }
 
+export async function listPublicFinanceSummaries(userIds) {
+  if (!userIds?.length) return [];
+  const { data, error } = await requireSupabase()
+    .from("public_finance_summaries")
+    .select("*")
+    .in("user_id", userIds)
+    .order("month", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
 export async function listSharedProfiles(viewerId, options = {}) {
   const supabase = requireSupabase();
   const { search = "", onlyFollowing = false } = options;
@@ -213,7 +224,7 @@ export async function listSharedProfiles(viewerId, options = {}) {
     supabase.from("categories").select("*").in("user_id", profileIds).order("created_at"),
     supabase.from("transactions").select("id, user_id, type, category_id, title, amount, note, date").in("user_id", profileIds).order("date", { ascending: false }).limit(300),
     supabase.from("wishlist_items").select("id, user_id, name, image_url, target_price, saved_amount, note, created_at").in("user_id", profileIds).order("created_at", { ascending: false }).limit(120),
-    supabase.from("public_finance_summaries").select("*").in("user_id", profileIds).order("month", { ascending: false }),
+    listPublicFinanceSummaries(profileIds),
   ]);
   for (const result of [sharePreferences, categories, transactions, wishlistItems]) if (result.error) throw result.error;
 
@@ -253,12 +264,10 @@ export async function listSharedProfiles(viewerId, options = {}) {
   }
 
   const summariesByUser = new Map();
-  if (!summaries.error) {
-    for (const row of summaries.data || []) {
-      const current = summariesByUser.get(row.user_id) || [];
-      current.push(row);
-      summariesByUser.set(row.user_id, current);
-    }
+  for (const row of summaries || []) {
+    const current = summariesByUser.get(row.user_id) || [];
+    current.push(row);
+    summariesByUser.set(row.user_id, current);
   }
 
   return (profiles.data || []).map((profile) => ({
