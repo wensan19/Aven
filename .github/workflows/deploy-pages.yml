@@ -54,7 +54,7 @@ jobs:
             echo "dist/assets was not generated."
             exit 1
           fi
-          if grep -q "/src/main.jsx" dist/index.html; then
+          if grep -q "main.jsx" dist/index.html; then
             echo "dist/index.html is still referencing raw JSX."
             exit 1
           fi
