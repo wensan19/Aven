@@ -329,6 +329,10 @@ export async function replaceSharePreferences(userId, sectionKeys) {
     category_id: preference.category_id || null,
     is_shared: preference.is_shared !== undefined ? Boolean(preference.is_shared) : true,
   }));
+  console.debug("Aven replaceSharePreferences rows", {
+    currentUserId: userId,
+    rows,
+  });
   const { data, error } = await supabase.from("user_share_preferences").insert(rows).select();
   if (error) throw error;
   return data || [];
@@ -355,6 +359,7 @@ function buildSharedProfile({ currentUserId, profile, shareRows, categories, tra
     currentUserId,
     sharePreferencesLoaded: shareRows,
     categoriesAllowedToShow: Array.from(visibleCategoryIds),
+    fetchedCategoriesCount: categories.length,
     wishlistAllowed: wishlistVisible,
     visibleCategoryCount: visibleCategories.length,
     visibleTransactionCount: visibleTransactions.length,
@@ -363,8 +368,10 @@ function buildSharedProfile({ currentUserId, profile, shareRows, categories, tra
   });
 
   return {
+    currentUserId,
     profile,
     shareRows,
+    fetchedCategoriesCount: categories.length,
     visibleCategories,
     transactions: visibleTransactions,
     wishlistItems: visibleWishlistItems,

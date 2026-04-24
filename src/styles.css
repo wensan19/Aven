@@ -178,6 +178,9 @@ input:focus, select:focus, textarea:focus { border-color: #78aee4; box-shadow: 0
 .shared-profile-card { display: grid; gap: 14px; }
 .shared-profile-header { display: flex; gap: 12px; align-items: center; }
 .share-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.shared-category-stack { display: grid; gap: 10px; }
+.shared-category-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 10px; }
+.shared-category-card { display: grid; gap: 6px; }
 .shared-section-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 10px; }
 .shared-section-card { display: grid; gap: 6px; }
 .shared-wishlist-stack { display: grid; gap: 10px; }

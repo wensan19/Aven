@@ -800,8 +800,16 @@ function Profile({ user, profile, setProfile, data, refresh, setFeedback, setErr
     event.preventDefault();
     try {
       const avatar_url = file ? await uploadPublicFile("avatars", user.id, file) : form.avatar_url;
+      const shareRows = buildSharePreferenceRows(data.categories, selectedCategoryIds, wishlistShared, form.share_finance_summary);
+      console.debug("Aven saving share preferences", {
+        currentUserId: user.id,
+        selectedCategoryIds,
+        wishlistShared,
+        shareFinanceSummary: Boolean(form.share_finance_summary),
+        shareRows,
+      });
       const saved = await saveProfile({ ...form, id: user.id, email: user.email || "", avatar_url });
-      await replaceSharePreferences(user.id, buildSharePreferenceRows(data.categories, selectedCategoryIds, wishlistShared, form.share_finance_summary));
+      await replaceSharePreferences(user.id, shareRows);
       setProfile(saved);
       await refresh();
       await addActivity({ user_id: user.id, activity_type: "profile_update", title: "Updated their profile", body: "Fresh profile details are live.", is_public: saved.is_public });
@@ -926,6 +934,16 @@ function Feed({ user }) {
 
 function SharedProfileCard({ item }) {
   const sectionTotals = groupSharedTransactionsByType(item.transactions);
+  const renderedCategoryCount = item.visibleCategories.length;
+
+  console.debug("Aven rendering shared categories", {
+    viewedUserId: item.profile?.id,
+    currentUserId: item.currentUserId,
+    loadedSharePreferences: item.shareRows,
+    sharedCategoryIds: item.visibleCategories.map((category) => category.id),
+    fetchedCategoriesCount: item.fetchedCategoriesCount,
+    finalRenderedCategoriesCount: renderedCategoryCount,
+  });
 
   return (
     <article className="panel shared-profile-card">
@@ -946,6 +964,26 @@ function SharedProfileCard({ item }) {
             {item.visibleCategories.map((category) => <span className="progress-pill" key={category.id}>{category.name}</span>)}
             {item.wishlistVisible ? <span className="progress-pill">Wishlist</span> : null}
             {item.summaryVisible ? <span className="progress-pill">Summaries</span> : null}
+          </div>
+          <div className="shared-category-stack">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Shared categories</p>
+                <h3>Categories this user chose to share</h3>
+              </div>
+            </div>
+            {item.visibleCategories.length ? (
+              <div className="shared-category-grid">
+                {item.visibleCategories.map((category) => (
+                  <article className="soft-card shared-category-card" key={category.id}>
+                    <p className="item-title">{category.name}</p>
+                    <p className="muted">{financeDisplayLabel(category.type)}</p>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">This user is not sharing any categories yet.</p>
+            )}
           </div>
           {sectionTotals.length ? (
             <div className="shared-section-grid">
