@@ -11,7 +11,23 @@ module.exports = defineConfig({
     __AVEN_BUILD_STAMP__: JSON.stringify(buildStamp),
     __AVEN_BUILD_VERSION__: JSON.stringify(buildVersion),
   },
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "aven-build-marker",
+      transformIndexHtml(html) {
+        return html.replace(
+          "</head>",
+          [
+            `    <meta name="aven-build-version" content="${buildVersion}" />`,
+            `    <meta name="aven-build-stamp" content="${buildStamp}" />`,
+            `    <!-- Aven build ${buildVersion} | ${buildStamp} -->`,
+            "  </head>",
+          ].join("\n"),
+        );
+      },
+    },
+  ],
   server: {
     proxy: {
       "/api": {
