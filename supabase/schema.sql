@@ -28,6 +28,7 @@ alter type public.share_section add value if not exists 'savings';
 alter type public.share_section add value if not exists 'stocks';
 alter type public.share_section add value if not exists 'banking';
 alter type public.share_section add value if not exists 'wishlist';
+alter type public.share_section add value if not exists 'share_none';
 
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -118,10 +119,13 @@ create table if not exists public.wishlist_items (
 );
 
 create table if not exists public.user_share_preferences (
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
   section_key share_section not null,
+  category_id uuid references public.categories(id) on delete cascade,
+  is_shared boolean not null default true,
   created_at timestamptz not null default now(),
-  primary key (user_id, section_key)
+  unique nulls not distinct (user_id, section_key, category_id)
 );
 
 create table public.activities (
@@ -138,6 +142,37 @@ alter table public.activities add column if not exists activity_type public.acti
 alter table public.activities add column if not exists title text not null default '';
 alter table public.activities add column if not exists body text not null default '';
 alter table public.activities add column if not exists is_public boolean not null default true;
+alter table public.user_share_preferences add column if not exists id uuid default gen_random_uuid();
+alter table public.user_share_preferences add column if not exists category_id uuid references public.categories(id) on delete cascade;
+alter table public.user_share_preferences add column if not exists is_shared boolean not null default true;
+
+update public.user_share_preferences
+set id = gen_random_uuid()
+where id is null;
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.table_constraints
+    where table_schema = 'public' and table_name = 'user_share_preferences' and constraint_name = 'user_share_preferences_pkey'
+  ) then
+    alter table public.user_share_preferences drop constraint user_share_preferences_pkey;
+  end if;
+exception
+  when undefined_table then null;
+end $$;
+
+do $$
+begin
+  alter table public.user_share_preferences add primary key (id);
+exception
+  when duplicate_table then null;
+  when duplicate_object then null;
+end $$;
+
+create unique index if not exists user_share_preferences_user_section_category_idx
+on public.user_share_preferences (user_id, section_key, coalesce(category_id, '00000000-0000-0000-0000-000000000000'::uuid));
 
 do $$
 begin
@@ -215,6 +250,32 @@ on public.categories for all
 using (user_id = auth.uid())
 with check (user_id = auth.uid());
 
+drop policy if exists "Followers can view shared categories" on public.categories;
+create policy "Followers can view shared categories"
+on public.categories for select
+using (
+  user_id = auth.uid()
+  or (
+    exists (
+      select 1 from public.profiles p
+      where p.id = categories.user_id and p.is_public = true
+    )
+    and exists (
+      select 1 from public.follows f
+      where f.following_id = categories.user_id and f.follower_id = auth.uid()
+    )
+    and exists (
+      select 1 from public.user_share_preferences usp
+      where usp.user_id = categories.user_id
+        and usp.is_shared = true
+        and (
+          usp.category_id = categories.id
+          or (usp.category_id is null and usp.section_key::text = categories.type::text)
+        )
+    )
+  )
+);
+
 create policy "Users manage own transactions"
 on public.transactions for all
 using (user_id = auth.uid())
@@ -236,7 +297,12 @@ using (
     )
     and exists (
       select 1 from public.user_share_preferences usp
-      where usp.user_id = transactions.user_id and usp.section_key::text = transactions.type::text
+      where usp.user_id = transactions.user_id
+        and usp.is_shared = true
+        and (
+          usp.category_id = transactions.category_id
+          or (usp.category_id is null and usp.section_key::text = transactions.type::text)
+        )
     )
   )
 );
@@ -273,7 +339,7 @@ using (
     )
     and exists (
       select 1 from public.user_share_preferences usp
-      where usp.user_id = wishlist_items.user_id and usp.section_key = 'wishlist'
+      where usp.user_id = wishlist_items.user_id and usp.section_key = 'wishlist' and usp.is_shared = true
     )
   )
 );

@@ -18,8 +18,8 @@ import {
   getSocialCounts,
   listFinanceData,
   listFollowingIds,
+  listSharedProfiles,
   listSummaryData,
-  listUsers,
   replaceSharePreferences,
   saveBudget,
   saveCategory,
@@ -46,15 +46,7 @@ const SOURCE_CATEGORY_SLOTS = [
   { key: "banking", categoryType: "banking", title: "Banking / Bank Account", description: "Track bank, checking, or debit account money separately or as allowance.", createName: "", createLabel: "Add Bank", sourceCreate: "banking" },
 ];
 const STANDARD_CATEGORY_TYPES = ["allowance", "income", "spending"];
-const SHAREABLE_SECTION_OPTIONS = [
-  ["allowance", "Allowance"],
-  ["income", "Earned"],
-  ["spending", "Spent"],
-  ["savings", "Savings"],
-  ["stocks", "Stocks"],
-  ["banking", "Banking"],
-  ["wishlist", "Wishlist"],
-];
+const SHAREABLE_SECTION_OPTIONS = [["wishlist", "Wishlist"]];
 
 const blankEntry = { type: "spending", title: "", amount: "", category_id: "", note: "", image_url: "", source_type: "allowance", counts_as_allowance: false, source_amount: "", allowance_amount: "", date: new Date().toISOString().slice(0, 10) };
 const blankCategory = { type: "spending", name: "", icon_url: "" };
@@ -784,18 +776,24 @@ function Profile({ user, profile, setProfile, data, refresh, setFeedback, setErr
   const [form, setForm] = useState(profile || {});
   const [file, setFile] = useState(null);
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
-  const [selectedSections, setSelectedSections] = useState([]);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState([]);
+  const [wishlistShared, setWishlistShared] = useState(false);
   useEffect(() => {
     setForm(profile || {});
     if (user) getSocialCounts(user.id).then(setCounts).catch(() => {});
   }, [profile?.id, user]);
 
   useEffect(() => {
-    setSelectedSections((data.sharePreferences || []).map((row) => row.section_key));
+    setSelectedCategoryIds(
+      (data.sharePreferences || [])
+        .filter((row) => row.is_shared && row.category_id)
+        .map((row) => row.category_id),
+    );
+    setWishlistShared((data.sharePreferences || []).some((row) => row.is_shared && row.section_key === "wishlist"));
   }, [data.sharePreferences]);
 
-  function toggleSection(sectionKey) {
-    setSelectedSections((current) => current.includes(sectionKey) ? current.filter((key) => key !== sectionKey) : [...current, sectionKey]);
+  function toggleCategory(categoryId) {
+    setSelectedCategoryIds((current) => current.includes(categoryId) ? current.filter((id) => id !== categoryId) : [...current, categoryId]);
   }
 
   async function submit(event) {
@@ -803,7 +801,7 @@ function Profile({ user, profile, setProfile, data, refresh, setFeedback, setErr
     try {
       const avatar_url = file ? await uploadPublicFile("avatars", user.id, file) : form.avatar_url;
       const saved = await saveProfile({ ...form, id: user.id, email: user.email || "", avatar_url });
-      await replaceSharePreferences(user.id, selectedSections);
+      await replaceSharePreferences(user.id, buildSharePreferenceRows(data.categories, selectedCategoryIds, wishlistShared, form.share_finance_summary));
       setProfile(saved);
       await refresh();
       await addActivity({ user_id: user.id, activity_type: "profile_update", title: "Updated their profile", body: "Fresh profile details are live.", is_public: saved.is_public });
@@ -839,18 +837,30 @@ function Profile({ user, profile, setProfile, data, refresh, setFeedback, setErr
                 <p className="eyebrow">Choose what to share</p>
                 <h3>Friend sharing controls</h3>
               </div>
-              <button className="tiny-button" type="button" onClick={() => setSelectedSections([])}>Share None</button>
+              <button className="tiny-button" type="button" onClick={() => { setSelectedCategoryIds([]); setWishlistShared(false); setForm({ ...form, share_finance_summary: false }); }}>Share None</button>
             </div>
             <p className="muted">Choose exactly which categories friends can see. Leave everything unchecked to share nothing private.</p>
             <div className="share-option-list">
-              {SHAREABLE_SECTION_OPTIONS.map(([key, label]) => (
-                <label className="check-row share-option" key={key}>
-                  <input type="checkbox" checked={selectedSections.includes(key)} onChange={() => toggleSection(key)} />
-                  <span>{label}</span>
+              {data.categories.map((category) => (
+                <label className="check-row share-option" key={category.id}>
+                  <input type="checkbox" checked={selectedCategoryIds.includes(category.id)} onChange={() => toggleCategory(category.id)} />
+                  <span>{category.name} <small className="share-type-tag">{financeDisplayLabel(category.type)}</small></span>
                 </label>
               ))}
             </div>
-            <p className="muted share-summary">{selectedSections.length ? `Sharing ${selectedSections.map((key) => SHAREABLE_SECTION_OPTIONS.find(([value]) => value === key)?.[1] || key).join(", ")}.` : "Share none is active. Followers will not see private categories or wishlist items."}</p>
+            <label className="check-row share-option">
+              <input type="checkbox" checked={wishlistShared} onChange={(event) => setWishlistShared(event.target.checked)} />
+              <span>Wishlist</span>
+            </label>
+            <label className="check-row share-option">
+              <input type="checkbox" checked={Boolean(form.share_finance_summary)} onChange={(event) => setForm({ ...form, share_finance_summary: event.target.checked })} />
+              <span>Monthly summaries</span>
+            </label>
+            <p className="muted share-summary">
+              {selectedCategoryIds.length || wishlistShared || form.share_finance_summary
+                ? `Sharing ${selectedCategoryIds.length} categories${wishlistShared ? ", wishlist" : ""}${form.share_finance_summary ? ", monthly summaries" : ""}.`
+                : "Share none is active. Followers will not see private categories, wishlist items, or summaries."}
+            </p>
           </section>
           <button className="primary-action wide">Save Profile</button>
         </form>
@@ -864,7 +874,7 @@ function Discover({ user }) {
   const [users, setUsers] = useState([]);
   const [following, setFollowing] = useState(new Set());
   useEffect(() => {
-    listUsers(search).then((rows) => setUsers(rows.filter((row) => row.id !== user.id))).catch(() => {});
+    listSharedProfiles(user.id, { search }).then(setUsers).catch(() => {});
   }, [search, user.id]);
   useEffect(() => {
     listFollowingIds(user.id).then((ids) => setFollowing(new Set(ids))).catch(() => {});
@@ -881,7 +891,23 @@ function Discover({ user }) {
   return (
     <Page title="Find public Aven profiles" eyebrow="Discover">
       <label className="search-box"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search username or display name" /></label>
-      <div className="card-list">{users.map((person) => <article className="list-card" key={person.id}><Avatar url={person.avatar_url} label={person.display_name} /><div><p className="item-title">{person.display_name}</p><p className="muted">@{person.username} - {person.bio}</p></div><button className="primary-action" onClick={() => toggle(person.id)}>{following.has(person.id) ? "Unfollow" : "Follow"}</button></article>)}</div>
+      <div className="card-list">
+        {users.map((person) => (
+          <article className="list-card discover-card" key={person.profile.id}>
+            <Avatar url={person.profile.avatar_url} label={person.profile.display_name} />
+            <div>
+              <p className="item-title">{person.profile.display_name}</p>
+              <p className="muted">@{person.profile.username} - {person.profile.bio}</p>
+              <p className="muted">
+                {following.has(person.profile.id)
+                  ? `Shared: ${person.shareNone ? "Nothing private" : `${person.visibleCategories.length} categories${person.wishlistVisible ? ", wishlist" : ""}${person.summaryVisible ? ", summaries" : ""}`}`
+                  : "Follow to see the data this person chooses to share."}
+              </p>
+            </div>
+            <button className="primary-action" onClick={() => toggle(person.profile.id)}>{following.has(person.profile.id) ? "Unfollow" : "Follow"}</button>
+          </article>
+        ))}
+      </div>
     </Page>
   );
 }
@@ -899,16 +925,7 @@ function Feed({ user }) {
 }
 
 function SharedProfileCard({ item }) {
-  const sectionTotals = SHAREABLE_SECTION_OPTIONS
-    .filter(([key]) => key !== "wishlist" && item.sharedSections.includes(key))
-    .map(([key, label]) => ({
-      key,
-      label,
-      total: item.transactions.filter((entry) => normalizeFinanceType(entry.type) === key).reduce((sum, entry) => sum + Number(entry.amount || 0), 0),
-      count: item.transactions.filter((entry) => normalizeFinanceType(entry.type) === key).length,
-    }))
-    .filter((section) => section.count > 0);
-  const wishlistVisible = item.sharedSections.includes("wishlist");
+  const sectionTotals = groupSharedTransactionsByType(item.transactions);
 
   return (
     <article className="panel shared-profile-card">
@@ -920,13 +937,15 @@ function SharedProfileCard({ item }) {
             <p className="muted">@{item.profile?.username || "aven"}</p>
           </div>
         </div>
-        <span className="progress-pill">{item.sharedSections.length ? `${item.sharedSections.length} shared` : "Share none"}</span>
+        <span className="progress-pill">{item.shareNone ? "Share none" : `${item.visibleCategories.length} categories`}</span>
       </div>
 
-      {item.sharedSections.length ? (
+      {!item.shareNone ? (
         <>
           <div className="share-chip-row">
-            {item.sharedSections.map((sectionKey) => <span className="progress-pill" key={sectionKey}>{shareSectionLabel(sectionKey)}</span>)}
+            {item.visibleCategories.map((category) => <span className="progress-pill" key={category.id}>{category.name}</span>)}
+            {item.wishlistVisible ? <span className="progress-pill">Wishlist</span> : null}
+            {item.summaryVisible ? <span className="progress-pill">Summaries</span> : null}
           </div>
           {sectionTotals.length ? (
             <div className="shared-section-grid">
@@ -941,7 +960,18 @@ function SharedProfileCard({ item }) {
           ) : (
             <p className="muted">No visible category activity yet for the sections this friend chose to share.</p>
           )}
-          {wishlistVisible && (
+          {item.summaryVisible && item.summary && (
+            <article className="soft-card shared-section-card">
+              <p className="item-title">Latest monthly summary</p>
+              <p className="muted">{new Date(`${item.summary.month}T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" })}</p>
+              <div className="wishlist-stats">
+                <span>Income <strong>{money(item.summary.monthly_income_total)}</strong></span>
+                <span>Spending <strong>{money(item.summary.monthly_spending_total)}</strong></span>
+                <span>Savings <strong>{money(item.summary.monthly_savings_total)}</strong></span>
+              </div>
+            </article>
+          )}
+          {item.wishlistVisible && (
             <div className="shared-wishlist-stack">
               <div className="section-heading">
                 <div>
@@ -2116,6 +2146,36 @@ function sourceDescription(entry) {
 
 function shareSectionLabel(sectionKey) {
   return SHAREABLE_SECTION_OPTIONS.find(([key]) => key === sectionKey)?.[1] || sectionKey;
+}
+
+function buildSharePreferenceRows(categories, selectedCategoryIds, wishlistShared, summaryShared) {
+  const categoryRows = categories
+    .filter((category) => selectedCategoryIds.includes(category.id))
+    .map((category) => ({
+      section_key: normalizeFinanceType(category.type),
+      category_id: category.id,
+      is_shared: true,
+    }));
+  const rows = [
+    ...categoryRows,
+    ...(wishlistShared ? [{ section_key: "wishlist", is_shared: true }] : []),
+  ];
+  if (!rows.length && !summaryShared) {
+    return [{ section_key: "share_none", is_shared: true }];
+  }
+  return rows;
+}
+
+function groupSharedTransactionsByType(transactions) {
+  const grouped = new Map();
+  transactions.forEach((entry) => {
+    const key = normalizeFinanceType(entry.type);
+    const current = grouped.get(key) || { key, label: financeDisplayLabel(key), total: 0, count: 0 };
+    current.total += Number(entry.amount || 0);
+    current.count += 1;
+    grouped.set(key, current);
+  });
+  return Array.from(grouped.values()).sort((a, b) => b.total - a.total);
 }
 
 function readableSupabaseError(error, fallback = "Something went wrong.") {

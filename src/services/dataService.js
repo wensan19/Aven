@@ -142,7 +142,7 @@ export async function deleteBudget(id) {
 export async function listUsers(search = "") {
   const query = requireSupabase()
     .from("profiles")
-    .select("id, username, display_name, bio, avatar_url, is_public")
+    .select("id, username, display_name, bio, avatar_url, is_public, share_finance_summary")
     .eq("is_public", true)
     .limit(20);
   if (search) query.or(`username.ilike.%${search}%,display_name.ilike.%${search}%`);
@@ -179,24 +179,63 @@ export async function getSocialCounts(userId) {
 }
 
 export async function getFeed(userId) {
+  return listSharedProfiles(userId, { onlyFollowing: true });
+}
+
+export async function listSharedProfiles(viewerId, options = {}) {
   const supabase = requireSupabase();
-  const { data: follows, error: followsError } = await supabase.from("follows").select("following_id").eq("follower_id", userId);
-  if (followsError) throw followsError;
-  const ids = (follows || []).map((row) => row.following_id);
-  if (!ids.length) return [];
-  const [profiles, sharePreferences, transactions, wishlistItems] = await Promise.all([
-    supabase.from("profiles").select("id, username, display_name, avatar_url").in("id", ids).eq("is_public", true),
-    supabase.from("user_share_preferences").select("user_id, section_key").in("user_id", ids),
-    supabase.from("transactions").select("id, user_id, type, title, amount, note, date").in("user_id", ids).order("date", { ascending: false }).limit(200),
-    supabase.from("wishlist_items").select("id, user_id, name, image_url, target_price, saved_amount, note, created_at").in("user_id", ids).order("created_at", { ascending: false }).limit(100),
+  const { search = "", onlyFollowing = false } = options;
+  let ids = null;
+
+  if (onlyFollowing) {
+    const { data: follows, error: followsError } = await supabase.from("follows").select("following_id").eq("follower_id", viewerId);
+    if (followsError) throw followsError;
+    ids = (follows || []).map((row) => row.following_id);
+    if (!ids.length) return [];
+  }
+
+  let profilesQuery = supabase
+    .from("profiles")
+    .select("id, username, display_name, bio, avatar_url, is_public, share_finance_summary")
+    .eq("is_public", true)
+    .neq("id", viewerId)
+    .limit(30);
+  if (ids) profilesQuery = profilesQuery.in("id", ids);
+  if (search) profilesQuery = profilesQuery.or(`username.ilike.%${search}%,display_name.ilike.%${search}%`);
+
+  const profiles = await profilesQuery;
+  if (profiles.error) throw profiles.error;
+  const profileIds = (profiles.data || []).map((row) => row.id);
+  if (!profileIds.length) return [];
+
+  const [sharePreferences, categories, transactions, wishlistItems, summaries] = await Promise.all([
+    supabase.from("user_share_preferences").select("*").in("user_id", profileIds).eq("is_shared", true),
+    supabase.from("categories").select("*").in("user_id", profileIds).order("created_at"),
+    supabase.from("transactions").select("id, user_id, type, category_id, title, amount, note, date").in("user_id", profileIds).order("date", { ascending: false }).limit(300),
+    supabase.from("wishlist_items").select("id, user_id, name, image_url, target_price, saved_amount, note, created_at").in("user_id", profileIds).order("created_at", { ascending: false }).limit(120),
+    supabase.from("public_finance_summaries").select("*").in("user_id", profileIds).order("month", { ascending: false }),
   ]);
-  for (const result of [profiles, sharePreferences, transactions, wishlistItems]) if (result.error) throw result.error;
+  for (const result of [sharePreferences, categories, transactions, wishlistItems]) if (result.error) throw result.error;
 
   const preferencesByUser = new Map();
   for (const row of sharePreferences.data || []) {
     const current = preferencesByUser.get(row.user_id) || [];
     current.push(row.section_key);
     preferencesByUser.set(row.user_id, current);
+  }
+
+  const shareRowsByUser = new Map();
+  for (const row of sharePreferences.data || []) {
+    const current = shareRowsByUser.get(row.user_id) || [];
+    current.push(row);
+    shareRowsByUser.set(row.user_id, current);
+  }
+
+  const categoriesByUser = new Map();
+  for (const row of categories.data || []) {
+    const current = categoriesByUser.get(row.user_id) || [];
+    current.push(row);
+    categoriesByUser.set(row.user_id, current);
   }
 
   const transactionsByUser = new Map();
@@ -213,11 +252,26 @@ export async function getFeed(userId) {
     wishlistByUser.set(row.user_id, current);
   }
 
+  const summariesByUser = new Map();
+  if (!summaries.error) {
+    for (const row of summaries.data || []) {
+      const current = summariesByUser.get(row.user_id) || [];
+      current.push(row);
+      summariesByUser.set(row.user_id, current);
+    }
+  }
+
   return (profiles.data || []).map((profile) => ({
-    profile,
+    ...buildSharedProfile({
+      currentUserId: viewerId,
+      profile,
+      shareRows: shareRowsByUser.get(profile.id) || [],
+      categories: categoriesByUser.get(profile.id) || [],
+      transactions: transactionsByUser.get(profile.id) || [],
+      wishlistItems: wishlistByUser.get(profile.id) || [],
+      summaries: summariesByUser.get(profile.id) || [],
+    }),
     sharedSections: preferencesByUser.get(profile.id) || [],
-    transactions: transactionsByUser.get(profile.id) || [],
-    wishlistItems: wishlistByUser.get(profile.id) || [],
   }));
 }
 
@@ -260,8 +314,54 @@ export async function replaceSharePreferences(userId, sectionKeys) {
   const { error: deleteError } = await supabase.from("user_share_preferences").delete().eq("user_id", userId);
   if (deleteError) throw deleteError;
   if (!sectionKeys.length) return [];
-  const rows = sectionKeys.map((sectionKey) => ({ user_id: userId, section_key: sectionKey }));
+  const rows = sectionKeys.map((preference) => ({
+    user_id: userId,
+    section_key: preference.section_key,
+    category_id: preference.category_id || null,
+    is_shared: preference.is_shared !== undefined ? Boolean(preference.is_shared) : true,
+  }));
   const { data, error } = await supabase.from("user_share_preferences").insert(rows).select();
   if (error) throw error;
   return data || [];
+}
+
+function buildSharedProfile({ currentUserId, profile, shareRows, categories, transactions, wishlistItems, summaries }) {
+  const shareNone = shareRows.some((row) => row.section_key === "share_none" && row.is_shared);
+  const allowedCategoryIds = new Set(shareRows.filter((row) => row.category_id && row.is_shared).map((row) => row.category_id));
+  const allowedSections = new Set(shareRows.filter((row) => !row.category_id && row.is_shared && row.section_key !== "share_none").map((row) => row.section_key));
+  const visibleCategories = shareNone
+    ? []
+    : categories.filter((category) => allowedCategoryIds.has(category.id) || allowedSections.has(normalizeFinanceType(category.type)));
+  const visibleCategoryIds = new Set(visibleCategories.map((category) => category.id));
+  const visibleTransactions = shareNone
+    ? []
+    : transactions.filter((entry) => visibleCategoryIds.has(entry.category_id) || allowedSections.has(normalizeFinanceType(entry.type)));
+  const wishlistVisible = !shareNone && allowedSections.has("wishlist");
+  const visibleWishlistItems = wishlistVisible ? wishlistItems : [];
+  const summaryVisible = Boolean(profile.share_finance_summary);
+  const latestSummary = summaryVisible ? (summaries[0] || null) : null;
+
+  console.debug("Aven shared profile visibility", {
+    viewedUserId: profile.id,
+    currentUserId,
+    sharePreferencesLoaded: shareRows,
+    categoriesAllowedToShow: Array.from(visibleCategoryIds),
+    wishlistAllowed: wishlistVisible,
+    visibleCategoryCount: visibleCategories.length,
+    visibleTransactionCount: visibleTransactions.length,
+    visibleWishlistCount: visibleWishlistItems.length,
+    summaryVisible,
+  });
+
+  return {
+    profile,
+    shareRows,
+    visibleCategories,
+    transactions: visibleTransactions,
+    wishlistItems: visibleWishlistItems,
+    wishlistVisible,
+    shareNone,
+    summary: latestSummary,
+    summaryVisible,
+  };
 }
