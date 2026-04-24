@@ -234,52 +234,56 @@ export async function listSharedProfiles(viewerId, options = {}) {
   const profileIds = (profiles.data || []).map((row) => row.id);
   if (!profileIds.length) return [];
 
-  const [sharePreferences, categories, transactions, wishlistItems, summaries] = await Promise.all([
+  const [sharePreferences, categories, transactions, wishlistItems, summaries] = await Promise.allSettled([
     supabase.from("user_share_preferences").select("*").in("user_id", profileIds).eq("is_shared", true),
     supabase.from("categories").select("*").in("user_id", profileIds).order("created_at"),
     supabase.from("transactions").select("id, user_id, type, category_id, title, amount, note, date").in("user_id", profileIds).order("date", { ascending: false }).limit(300),
     supabase.from("wishlist_items").select("id, user_id, name, image_url, target_price, saved_amount, note, created_at").in("user_id", profileIds).order("created_at", { ascending: false }).limit(120),
     listPublicFinanceSummaries(profileIds),
   ]);
-  for (const result of [sharePreferences, categories, transactions, wishlistItems]) if (result.error) throw result.error;
+  const sharePreferenceRows = resolvedRowsFromResult("share preferences", sharePreferences, true);
+  const categoryRows = resolvedRowsFromResult("categories", categories);
+  const transactionRows = resolvedRowsFromResult("transactions", transactions);
+  const wishlistRows = resolvedRowsFromResult("wishlist items", wishlistItems);
+  const summaryRows = resolvedRowsFromResult("finance summaries", summaries);
 
   const preferencesByUser = new Map();
-  for (const row of sharePreferences.data || []) {
+  for (const row of sharePreferenceRows) {
     const current = preferencesByUser.get(row.user_id) || [];
     current.push(row.section_key);
     preferencesByUser.set(row.user_id, current);
   }
 
   const shareRowsByUser = new Map();
-  for (const row of sharePreferences.data || []) {
+  for (const row of sharePreferenceRows) {
     const current = shareRowsByUser.get(row.user_id) || [];
     current.push(row);
     shareRowsByUser.set(row.user_id, current);
   }
 
   const categoriesByUser = new Map();
-  for (const row of categories.data || []) {
+  for (const row of categoryRows) {
     const current = categoriesByUser.get(row.user_id) || [];
     current.push(row);
     categoriesByUser.set(row.user_id, current);
   }
 
   const transactionsByUser = new Map();
-  for (const row of transactions.data || []) {
+  for (const row of transactionRows) {
     const current = transactionsByUser.get(row.user_id) || [];
     current.push(row);
     transactionsByUser.set(row.user_id, current);
   }
 
   const wishlistByUser = new Map();
-  for (const row of wishlistItems.data || []) {
+  for (const row of wishlistRows) {
     const current = wishlistByUser.get(row.user_id) || [];
     current.push(row);
     wishlistByUser.set(row.user_id, current);
   }
 
   const summariesByUser = new Map();
-  for (const row of summaries || []) {
+  for (const row of summaryRows) {
     const current = summariesByUser.get(row.user_id) || [];
     current.push(row);
     summariesByUser.set(row.user_id, current);
@@ -395,4 +399,19 @@ function buildSharedProfile({ currentUserId, profile, shareRows, categories, tra
     summary: latestSummary,
     summaryVisible,
   };
+}
+
+function resolvedRowsFromResult(label, result, required = false) {
+  if (result.status === "fulfilled") {
+    if (Array.isArray(result.value)) return result.value;
+    if (result.value?.error) {
+      if (required) throw result.value.error;
+      console.error(`Aven shared ${label} query failed:`, result.value.error);
+      return [];
+    }
+    return result.value?.data || [];
+  }
+  if (required) throw result.reason;
+  console.error(`Aven shared ${label} query rejected:`, result.reason);
+  return [];
 }

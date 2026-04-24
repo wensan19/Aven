@@ -939,8 +939,18 @@ function Discover({ user }) {
   const [search, setSearch] = useState("");
   const [users, setUsers] = useState([]);
   const [following, setFollowing] = useState(new Set());
+  const [error, setError] = useState("");
   useEffect(() => {
-    listSharedProfiles(user.id, { search }).then(setUsers).catch(() => {});
+    listSharedProfiles(user.id, { search })
+      .then((rows) => {
+        setUsers(rows);
+        setError("");
+      })
+      .catch((err) => {
+        console.error("Discover shared profile load failed:", err);
+        setUsers([]);
+        setError(readableSupabaseError(err, "Could not load shared profiles right now."));
+      });
   }, [search, user.id]);
   useEffect(() => {
     listFollowingIds(user.id).then((ids) => setFollowing(new Set(ids))).catch(() => {});
@@ -957,8 +967,9 @@ function Discover({ user }) {
   return (
     <Page title="Find public Aven profiles" eyebrow="Discover">
       <label className="search-box"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search username or display name" /></label>
+      {error && <div className="alert">{error}</div>}
       <div className="card-list">
-        {users.map((person) => (
+        {users.length ? users.map((person) => (
           <article className="list-card discover-card" key={person.profile.id}>
             <Avatar url={person.profile.avatar_url} label={person.profile.display_name} />
             <div>
@@ -972,7 +983,7 @@ function Discover({ user }) {
             </div>
             <button className="primary-action" onClick={() => toggle(person.profile.id)}>{following.has(person.profile.id) ? "Unfollow" : "Follow"}</button>
           </article>
-        ))}
+        )) : <EmptyState title="No public profiles yet">Try following someone to view the categories, wishlist, and summaries they choose to share.</EmptyState>}
       </div>
     </Page>
   );
@@ -980,9 +991,22 @@ function Discover({ user }) {
 
 function Feed({ user }) {
   const [items, setItems] = useState([]);
-  useEffect(() => { getFeed(user.id).then(setItems).catch(() => {}); }, [user.id]);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    getFeed(user.id)
+      .then((rows) => {
+        setItems(rows);
+        setError("");
+      })
+      .catch((err) => {
+        console.error("Feed shared profile load failed:", err);
+        setItems([]);
+        setError(readableSupabaseError(err, "Could not load the following feed right now."));
+      });
+  }, [user.id]);
   return (
     <Page title="Privacy-safe shared content" eyebrow="Following Feed">
+      {error && <div className="alert">{error}</div>}
       <section className="feed-grid">
         {items.length ? items.map((item) => <SharedProfileCard key={item.profile.id} item={item} />) : <EmptyState title="No feed yet">Follow public profiles to see the categories and wishlist sections they choose to share.</EmptyState>}
       </section>
@@ -1080,7 +1104,7 @@ function SharedProfileCard({ item, preview = false }) {
           )}
         </>
       ) : (
-        <p className="muted">{preview ? "You are sharing nothing private right now." : "This friend is sharing nothing private right now."}</p>
+        <p className="muted">{preview ? "You are sharing nothing private right now." : "This user is not sharing anything yet."}</p>
       )}
     </article>
   );
